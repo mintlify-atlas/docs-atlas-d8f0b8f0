@@ -1,0 +1,108 @@
+{
+  "projectType": "data-platform",
+  "projectName": "IMDb Scraper",
+  "projectDescription": "A distributed web scraping system for IMDb Top 250 movies with advanced anti-blocking techniques, hybrid persistence (CSV + PostgreSQL), and clean architecture.",
+  "theme": "aspen",
+  "primaryColor": "#F5C518",
+  "lightColor": "#FFD54F",
+  "darkColor": "#C79A00",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/clean-architecture",
+              "architecture/domain-models",
+              "architecture/dependency-injection"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/scraping-engine",
+              "features/network-evasion",
+              "features/persistence",
+              "features/concurrency"
+            ]
+          },
+          {
+            "group": "Data & SQL",
+            "pages": [
+              "data/schema",
+              "data/analytical-queries",
+              "data/csv-export"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker-setup",
+              "deployment/environment-variables",
+              "deployment/network-configuration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Domain Layer",
+            "pages": [
+              "api/domain/models",
+              "api/domain/interfaces",
+              "api/domain/repositories"
+            ]
+          },
+          {
+            "group": "Application Layer",
+            "pages": [
+              "api/application/use-cases"
+            ]
+          },
+          {
+            "group": "Infrastructure",
+            "pages": [
+              "api/infrastructure/scraper",
+              "api/infrastructure/network",
+              "api/infrastructure/persistence"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Clean Architecture with DDD principles",
+    "Multi-layer network evasion (VPN + Proxies + TOR)",
+    "Hybrid persistence (PostgreSQL + CSV)",
+    "Concurrent scraping with ThreadPoolExecutor",
+    "Advanced SQL analytics with window functions",
+    "Docker-orchestrated deployment",
+    "Extensible scraping engine architecture"
+  ],
+  "publicApiSurface": [
+    "ImdbScraper.scrape()",
+    "Movie model with actors relation",
+    "Actor model",
+    "CompositeSaveMovieWithActorsUseCase",
+    "SaveMovieWithActorsCsvUseCase",
+    "SaveMovieWithActorsPostgresUseCase",
+    "DependencyContainer.get_scraper()",
+    "ProxyProvider interface",
+    "TorRotator interface",
+    "MovieRepository, ActorRepository, MovieActorRepository"
+  ]
+}
