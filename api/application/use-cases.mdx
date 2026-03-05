@@ -1,0 +1,319 @@
+---
+title: Use Cases
+description: Application layer use cases orchestrating movie and actor persistence
+---
+
+## Overview
+
+Use cases orchestrate business logic by coordinating repositories and handling duplicate detection. They implement the `UseCaseInterface` and operate on validated domain models.
+
+## CompositeSaveMovieWithActorsUseCase
+
+Orchestrates multiple save operations concurrently using a thread pool.
+
+### Class Definition
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+from typing import List
+from domain.models.movie import Movie
+from domain.interfaces.use_case_interface import UseCaseInterface
+
+class CompositeSaveMovieWithActorsUseCase(UseCaseInterface):
+    def __init__(self, use_cases: List[UseCaseInterface]):
+        self.use_cases = use_cases
+        self.max_workers = len(use_cases)
+```
+
+**Source:** `application/use_cases/composite_save_movie_with_actors_use_case.py:7-23`
+
+### Constructor
+
+<ParamField path="use_cases" type="List[UseCaseInterface]" required>
+  List of use cases to execute concurrently (e.g., CSV and PostgreSQL use cases).
+</ParamField>
+
+### Methods
+
+#### execute
+
+Executes all use cases in parallel using a thread pool.
+
+```python
+def execute(self, movie: Movie) -> None
+```
+
+<ParamField path="movie" type="Movie" required>
+  Movie object containing validated data to persist.
+</ParamField>
+
+**Source:** `application/use_cases/composite_save_movie_with_actors_use_case.py:25-35`
+
+### Example
+
+```python
+from application.use_cases import (
+    CompositeSaveMovieWithActorsUseCase,
+    SaveMovieWithActorsCsvUseCase,
+    SaveMovieWithActorsPostgresUseCase
+)
+
+# Create individual use cases
+csv_use_case = SaveMovieWithActorsCsvUseCase(
+    movie_repository=movie_csv_repo,
+    actor_repository=actor_csv_repo,
+    movie_actor_repository=relation_csv_repo
+)
+
+postgres_use_case = SaveMovieWithActorsPostgresUseCase(
+    movie_repository=movie_pg_repo,
+    actor_repository=actor_pg_repo,
+    movie_actor_repository=relation_pg_repo
+)
+
+# Composite use case executes both concurrently
+composite = CompositeSaveMovieWithActorsUseCase(
+    use_cases=[csv_use_case, postgres_use_case]
+)
+
+composite.execute(movie)  # Saves to both CSV and PostgreSQL in parallel
+```
+
+---
+
+## SaveMovieWithActorsCsvUseCase
+
+Saves a movie and its actors to CSV files, handling duplicates.
+
+### Class Definition
+
+```python
+from domain.models.movie import Movie
+from domain.interfaces.use_case_interface import UseCaseInterface
+from domain.repositories.movie_repository import MovieRepository
+from domain.repositories.actor_repository import ActorRepository
+from domain.repositories.movie_actor_repository import MovieActorRepository
+
+class SaveMovieWithActorsCsvUseCase(UseCaseInterface):
+    def __init__(
+        self,
+        movie_repository: MovieRepository,
+        actor_repository: ActorRepository,
+        movie_actor_repository: MovieActorRepository
+    ):
+        self.movie_repo = movie_repository
+        self.actor_repo = actor_repository
+        self.movie_actor_repo = movie_actor_repository
+```
+
+**Source:** `application/use_cases/save_movie_with_actors_csv_use_case.py:12-26`
+
+### Constructor
+
+<ParamField path="movie_repository" type="MovieRepository" required>
+  Repository for movie persistence.
+</ParamField>
+
+<ParamField path="actor_repository" type="ActorRepository" required>
+  Repository for actor persistence.
+</ParamField>
+
+<ParamField path="movie_actor_repository" type="MovieActorRepository" required>
+  Repository for movie-actor relationship persistence.
+</ParamField>
+
+### Methods
+
+#### execute
+
+Saves movie and actors to CSV, with duplicate detection.
+
+```python
+def execute(self, movie: Movie) -> None
+```
+
+<ParamField path="movie" type="Movie" required>
+  Movie object with validated data and associated actors.
+</ParamField>
+
+**Source:** `application/use_cases/save_movie_with_actors_csv_use_case.py:28-65`
+
+### Logic Flow
+
+1. **Check movie duplicates** - Search by IMDb ID, skip if exists
+2. **Save movie** - Persist to CSV, receive ID
+3. **Process actors** - For each actor:
+   - Check if actor exists by name
+   - Use existing or save new actor
+   - Collect movie-actor relationships
+4. **Save relationships** - Batch save all relationships
+
+### Error Handling
+
+Logs errors and continues execution:
+
+```python
+try:
+    # ... save operations
+except Exception as e:
+    logger.error(f"Error al escribir en CSV para la película '{movie.title}': {e}")
+```
+
+**Source:** `application/use_cases/save_movie_with_actors_csv_use_case.py:64-65`
+
+---
+
+## SaveMovieWithActorsPostgresUseCase
+
+Saves a movie and its actors to PostgreSQL database, handling duplicates.
+
+### Class Definition
+
+```python
+from domain.models.movie import Movie
+from domain.interfaces.use_case_interface import UseCaseInterface
+from domain.repositories.movie_repository import MovieRepository
+from domain.repositories.actor_repository import ActorRepository
+from domain.repositories.movie_actor_repository import MovieActorRepository
+
+class SaveMovieWithActorsPostgresUseCase(UseCaseInterface):
+    def __init__(
+        self,
+        movie_repository: MovieRepository,
+        actor_repository: ActorRepository,
+        movie_actor_repository: MovieActorRepository
+    ):
+        self.movie_repo = movie_repository
+        self.actor_repo = actor_repository
+        self.movie_actor_repo = movie_actor_repository
+```
+
+**Source:** `application/use_cases/save_movie_with_actors_postgres_use_case.py:15-28`
+
+### Constructor
+
+<ParamField path="movie_repository" type="MovieRepository" required>
+  Repository for movie persistence.
+</ParamField>
+
+<ParamField path="actor_repository" type="ActorRepository" required>
+  Repository for actor persistence.
+</ParamField>
+
+<ParamField path="movie_actor_repository" type="MovieActorRepository" required>
+  Repository for movie-actor relationship persistence.
+</ParamField>
+
+### Methods
+
+#### execute
+
+Saves movie and actors to PostgreSQL with duplicate handling.
+
+```python
+def execute(self, movie: Movie) -> None
+```
+
+<ParamField path="movie" type="Movie" required>
+  Movie object with validated data and associated actors.
+</ParamField>
+
+**Source:** `application/use_cases/save_movie_with_actors_postgres_use_case.py:30-69`
+
+### Logic Flow
+
+1. **Check movie duplicates** - Query by IMDb ID, skip if exists
+2. **Save movie** - Use stored procedure, verify ID returned
+3. **Process actors** - For each actor:
+   - Query if actor exists by name
+   - Use existing or insert new actor
+   - Collect valid movie-actor relationships
+4. **Save relationships** - Batch insert relationships
+
+### Error Handling
+
+Logs database errors with context:
+
+```python
+try:
+    # ... database operations
+except Exception as e:
+    logger.error(f"Error en la base de datos al procesar '{movie.title}': {e}")
+```
+
+**Source:** `application/use_cases/save_movie_with_actors_postgres_use_case.py:68-69`
+
+### Additional Validation
+
+Verifies successful save before continuing:
+
+```python
+saved_movie = self.movie_repo.save(movie)
+if not saved_movie or not saved_movie.id:
+    logger.error(f"Error al guardar la película '{movie.title}' o al obtener su ID.")
+    return
+```
+
+**Source:** `application/use_cases/save_movie_with_actors_postgres_use_case.py:45-48`
+
+---
+
+## Common Patterns
+
+### Duplicate Prevention
+
+All use cases check for existing entities:
+
+```python
+# Check if movie already exists
+existing_movie = self.movie_repo.find_by_imdb_id(movie.imdb_id)
+if existing_movie:
+    logger.info(f"La película '{movie.title}' ya existe. Saltando.")
+    return
+
+# Check if actor exists
+existing_actor = self.actor_repo.find_by_name(actor.name)
+if existing_actor:
+    saved_actor = existing_actor
+else:
+    saved_actor = self.actor_repo.save(actor)
+```
+
+### Batch Operations
+
+Collect relationships and save in bulk:
+
+```python
+relations_to_save = []
+for actor in movie.actors:
+    # ... process actor
+    relations_to_save.append(
+        MovieActor(movie_id=saved_movie.id, actor_id=saved_actor.id)
+    )
+
+if relations_to_save:
+    self.movie_actor_repo.save_many(relations_to_save)
+```
+
+### Dependency Injection
+
+Repositories injected via constructor, enabling:
+- **Flexibility** - Swap implementations
+- **Testability** - Use mock repositories
+- **Separation** - Business logic independent of infrastructure
+
+```python
+# Production
+use_case = SaveMovieWithActorsCsvUseCase(
+    movie_repository=MovieCsvRepository(),
+    actor_repository=ActorCsvRepository(),
+    movie_actor_repository=MovieActorCsvRepository()
+)
+
+# Testing
+use_case = SaveMovieWithActorsCsvUseCase(
+    movie_repository=MockMovieRepository(),
+    actor_repository=MockActorRepository(),
+    movie_actor_repository=MockRelationRepository()
+)
+```

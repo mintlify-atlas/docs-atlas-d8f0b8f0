@@ -1,0 +1,316 @@
+---
+title: CSV Export & Import
+description: Export IMDb data to CSV files and reload data from CSV format
+---
+
+The IMDb Scraper supports exporting all database tables to CSV format for portability, backup, and external analysis. CSV files can also be loaded back into PostgreSQL.
+
+## CSV File Structure
+
+The database exports to three CSV files that mirror the table structure:
+
+1. **movies.csv** - Movie metadata
+2. **actors.csv** - Actor names
+3. **movie_actor.csv** - Movie-actor relationships
+
+## movies.csv Format
+
+Contains all movie metadata from the `movies` table.
+
+### Columns
+
+```
+id,imdb_id,title,year,rating,duration_minutes,metascore
+```
+
+### Example Data
+
+```csv
+id,imdb_id,title,year,rating,duration_minutes,metascore
+1,tt0111161,The Shawshank Redemption,1994,9.3,142,80
+2,tt0068646,The Godfather,1972,9.2,175,100
+3,tt0468569,The Dark Knight,2008,9.0,152,84
+```
+
+### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | Integer | Database primary key (auto-increment) |
+| imdb_id | String | Official IMDb identifier (e.g., tt0111161) |
+| title | String | Full movie title |
+| year | Integer | Release year |
+| rating | Float | IMDb user rating (0.0-10.0) |
+| duration_minutes | Integer | Runtime in minutes |
+| metascore | Integer | Metacritic score (0-100) |
+
+## actors.csv Format
+
+Contains unique actor names from the `actors` table.
+
+### Columns
+
+```
+id,name
+```
+
+### Example Data
+
+```csv
+id,name
+1,Tim Robbins
+2,Morgan Freeman
+3,Marlon Brando
+4,Al Pacino
+5,Christian Bale
+```
+
+### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | Integer | Database primary key (auto-increment) |
+| name | String | Actor's full name (unique) |
+
+## movie_actor.csv Format
+
+Contains the many-to-many relationships between movies and actors.
+
+### Columns
+
+```
+movie_id,actor_id
+```
+
+### Example Data
+
+```csv
+movie_id,actor_id
+1,1
+1,2
+2,3
+2,4
+3,5
+```
+
+### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| movie_id | Integer | Foreign key to movies.id |
+| actor_id | Integer | Foreign key to actors.id |
+
+### Interpretation
+
+Each row represents one actor appearing in one movie:
+- Row 1: Movie #1 stars Actor #1 (The Shawshank Redemption, Tim Robbins)
+- Row 2: Movie #1 stars Actor #2 (The Shawshank Redemption, Morgan Freeman)
+- Row 3: Movie #2 stars Actor #3 (The Godfather, Marlon Brando)
+
+## Exporting to CSV
+
+### Using PostgreSQL COPY Command
+
+```sql
+-- Export movies
+COPY movies TO '/path/to/movies.csv' DELIMITER ',' CSV HEADER;
+
+-- Export actors
+COPY actors TO '/path/to/actors.csv' DELIMITER ',' CSV HEADER;
+
+-- Export relationships
+COPY movie_actor TO '/path/to/movie_actor.csv' DELIMITER ',' CSV HEADER;
+```
+
+### Using psql Command Line
+
+```bash
+psql -d imdb_database -c "COPY movies TO STDOUT DELIMITER ',' CSV HEADER" > movies.csv
+psql -d imdb_database -c "COPY actors TO STDOUT DELIMITER ',' CSV HEADER" > actors.csv
+psql -d imdb_database -c "COPY movie_actor TO STDOUT DELIMITER ',' CSV HEADER" > movie_actor.csv
+```
+
+## Loading CSV Data into PostgreSQL
+
+The project includes `sql/load_from_csv.sql` for importing CSV files back into the database.
+
+### Complete Load Script
+
+```sql
+-- =============================================
+--  Archivo: load_from_csv.sql
+--  Propósito: Cargar datos desde archivos CSV a las tablas del proyecto IMDb
+--  Autor: Andrés Ruiz
+--  Fecha de creación: 2025-08-03
+--  Nota: Requiere permisos en el servidor y acceso a las rutas locales especificadas.
+--        Asegúrate de reemplazar '/PATH_CAMBIAR/to/*.csv' con la ruta absoluta correcta.
+-- =============================================
+
+-- =============================================
+-- CARGAR PELÍCULAS
+-- Carga los datos de películas desde un archivo CSV con cabecera.
+-- =============================================
+COPY movies(id, title, year, rating, duration_minutes, metascore)
+FROM '/PATH_CAMBIAR/to/movies.csv' 
+DELIMITER ',' 
+CSV HEADER;
+
+-- =============================================
+-- CARGAR ACTORES
+-- Carga los datos de actores desde un archivo CSV con cabecera.
+-- =============================================
+COPY actors(id, name)
+FROM '/PATH_CAMBIAR/to/actors.csv' 
+DELIMITER ',' 
+CSV HEADER;
+
+-- =============================================
+-- CARGAR RELACIONES PELÍCULA–ACTOR
+-- Carga relaciones N:M entre películas y actores desde archivo CSV.
+-- =============================================
+COPY movie_actor(movie_id, actor_id)
+FROM '/PATH_CAMBIAR/to/movie_actor.csv' 
+DELIMITER ',' 
+CSV HEADER;
+```
+
+### Usage Instructions
+
+1. **Update File Paths**: Replace `/PATH_CAMBIAR/to/` with actual absolute paths
+   ```sql
+   FROM '/home/user/data/movies.csv'
+   ```
+
+2. **Ensure File Permissions**: PostgreSQL server must have read access to CSV files
+
+3. **Run the Script**:
+   ```bash
+   psql -d imdb_database -f sql/load_from_csv.sql
+   ```
+
+4. **Order Matters**: Load in this sequence to respect foreign key constraints:
+   - movies.csv first (parent table)
+   - actors.csv second (parent table)
+   - movie_actor.csv last (references both parents)
+
+<Warning>
+  The COPY command requires PostgreSQL server-level file access. If you don't have server permissions, use `\copy` in psql instead (client-side command).
+</Warning>
+
+### Alternative: Client-Side Import with \copy
+
+From within psql:
+
+```sql
+\copy movies FROM 'movies.csv' DELIMITER ',' CSV HEADER
+\copy actors FROM 'actors.csv' DELIMITER ',' CSV HEADER
+\copy movie_actor FROM 'movie_actor.csv' DELIMITER ',' CSV HEADER
+```
+
+The `\copy` command:
+- Runs on the client side (your machine)
+- Doesn't require server file system access
+- Works with relative paths from your current directory
+
+## Use Cases for CSV Export
+
+### 1. Data Backup
+
+```bash
+# Create timestamped backup
+DATE=$(date +%Y%m%d)
+mkdir -p backups/$DATE
+psql -d imdb_database -c "COPY movies TO STDOUT CSV HEADER" > backups/$DATE/movies.csv
+psql -d imdb_database -c "COPY actors TO STDOUT CSV HEADER" > backups/$DATE/actors.csv
+psql -d imdb_database -c "COPY movie_actor TO STDOUT CSV HEADER" > backups/$DATE/movie_actor.csv
+```
+
+### 2. External Analysis
+
+Import into:
+- **Excel/Google Sheets**: Manual analysis and charts
+- **Python/Pandas**: Machine learning and statistical analysis
+  ```python
+  import pandas as pd
+  movies = pd.read_csv('movies.csv')
+  print(movies.describe())
+  ```
+- **R/RStudio**: Statistical modeling
+- **Tableau/Power BI**: Business intelligence dashboards
+
+### 3. Data Migration
+
+- Move data between environments (dev → staging → production)
+- Transfer between different database systems
+- Share datasets with collaborators
+
+### 4. Data Integration
+
+- Load into data warehouses (Snowflake, BigQuery, Redshift)
+- Feed into ETL pipelines
+- Sync with analytics platforms
+
+## CSV Export from Query Results
+
+Export custom query results directly:
+
+```sql
+-- Export only top-rated movies
+COPY (
+  SELECT * FROM movies WHERE rating >= 8.0 ORDER BY rating DESC
+) TO '/path/to/top_movies.csv' CSV HEADER;
+
+-- Export movies with actor names (joined data)
+COPY (
+  SELECT m.title, m.year, m.rating, a.name as actor
+  FROM movies m
+  JOIN movie_actor ma ON m.id = ma.movie_id
+  JOIN actors a ON ma.actor_id = a.id
+  ORDER BY m.rating DESC
+) TO '/path/to/movies_with_actors.csv' CSV HEADER;
+```
+
+## Data Integrity Considerations
+
+<Info>
+  When loading CSV data, ensure the `id` sequences are updated to avoid primary key conflicts on future inserts:
+  
+  ```sql
+  SELECT setval('movies_id_seq', (SELECT MAX(id) FROM movies));
+  SELECT setval('actors_id_seq', (SELECT MAX(id) FROM actors));
+  ```
+</Info>
+
+## Character Encoding
+
+CSV files use UTF-8 encoding by default. If you encounter encoding issues:
+
+```sql
+COPY movies FROM 'movies.csv' 
+DELIMITER ',' 
+CSV HEADER 
+ENCODING 'UTF8';
+```
+
+## Handling NULL Values
+
+PostgreSQL represents NULL as an empty field in CSV:
+
+```csv
+id,imdb_id,title,year,rating,duration_minutes,metascore
+1,tt0111161,The Shawshank Redemption,1994,9.3,142,80
+2,tt0068646,The Godfather,1972,9.2,175,
+```
+
+Movie #2 has no metascore (empty field = NULL).
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Database Schema" icon="database" href="/data/schema">
+    Table structure and relationships
+  </Card>
+  <Card title="Analytical Queries" icon="chart-line" href="/data/analytical-queries">
+    Export query results for analysis
+  </Card>
+</CardGroup>

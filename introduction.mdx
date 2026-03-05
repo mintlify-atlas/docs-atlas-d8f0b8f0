@@ -1,0 +1,173 @@
+---
+title: Introduction
+description: A robust, scalable web scraper for IMDb's Top 250 movies built with Clean Architecture and Domain-Driven Design
+---
+
+## Overview
+
+The **IMDb Scraper** is a production-grade data extraction system designed to scrape IMDb's Top 250 movies chart with advanced anti-blocking capabilities, hybrid persistence (CSV + PostgreSQL), and a completely Dockerized deployment workflow.
+
+This project demonstrates professional software engineering practices by implementing **Clean Architecture** and **Domain-Driven Design (DDD)** principles, ensuring the codebase is maintainable, testable, and ready to scale.
+
+<Info>
+Built as a technical demonstration, this scraper showcases expertise in distributed scraping, architectural design patterns, and production-ready data pipelines.
+</Info>
+
+## What Does It Do?
+
+The IMDb Scraper extracts comprehensive movie data from IMDb's Top 250 chart, including:
+
+- **Title** - Movie name
+- **Year** - Release year
+- **Rating** - IMDb user rating (0-10)
+- **Duration** - Runtime in minutes
+- **Metascore** - Metacritic score (0-100)
+- **Actors** - Top 3 cast members from detail pages
+
+All data is persisted in both **CSV files** (for portability) and **PostgreSQL** (for advanced SQL analytics).
+
+## Key Features
+
+### Distributed Network Strategy
+
+The scraper implements a multi-layered evasion strategy to bypass IP-based blocking:
+
+<CardGroup cols={3}>
+  <Card title="VPN Integration" icon="shield">
+    ProtonVPN running in Docker for geolocation shifting
+  </Card>
+  <Card title="Premium Proxies" icon="server">
+    DataImpulse rotating proxies with automatic fallback
+  </Card>
+  <Card title="TOR Network" icon="circle-nodes">
+    Anonymous IP rotation via TOR as final fallback layer
+  </Card>
+</CardGroup>
+
+<Note>
+The scraper automatically validates IP changes and includes exponential backoff with intelligent retry logic.
+</Note>
+
+### Clean Architecture + DDD
+
+The project follows a strict layered architecture:
+
+```
+├── domain/          # Business entities and interfaces
+├── application/     # Use cases orchestrating business logic
+├── infrastructure/  # Technical implementations (scraper, DB, network)
+├── presentation/    # CLI entry point
+└── shared/          # Config, logging, utilities
+```
+
+**Benefits:**
+- **Separation of Concerns** - Dependencies point inward; domain logic is framework-agnostic
+- **Testability** - Core business logic can be unit tested in isolation
+- **Maintainability** - Clear boundaries between layers make changes predictable
+- **Scalability** - Easy to swap implementations (e.g., switch from requests to Playwright)
+
+### Hybrid Persistence
+
+Data is saved simultaneously to two storage backends:
+
+| Storage | Use Case | Format |
+|---------|----------|--------|
+| **CSV** | Quick exports, data portability, Excel analysis | `movies.csv`, `actors.csv`, `movie_actor.csv` |
+| **PostgreSQL** | Relational queries, analytics, production-grade storage | Normalized schema with N:M relationships |
+
+### Concurrency & Performance
+
+- **ThreadPoolExecutor** for parallel detail page scraping
+- Configurable thread pool (default: 50 workers)
+- Intelligent request throttling to avoid rate limits
+- Traffic monitoring and logging
+
+## Architecture Highlights
+
+### Domain Models with Built-in Validation
+
+Entities enforce their own business rules:
+
+```python
+@dataclass
+class Movie:
+    id: Optional[int]
+    imdb_id: str
+    title: str
+    year: int
+    rating: float
+    duration_minutes: Optional[int]
+    metascore: Optional[int]
+    actors: List[Actor] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Validates IMDb ID format
+        if not re.match(r"^tt\d{7,}$", self.imdb_id):
+            raise ValueError(f"IMDb ID inválido: '{self.imdb_id}'")
+        
+        # Validates year range
+        if not (1888 <= self.year <= 2030):
+            raise ValueError(f"Año inválido: {self.year}")
+```
+
+### Factory Pattern & Dependency Injection
+
+A centralized `DependencyContainer` manages object lifecycles and wiring:
+
+```python
+container = DependencyContainer(config)
+scraper = container.get_scraper()
+scraper.scrape()
+container.close_db_connection()
+```
+
+This decouples the application from concrete implementations, making it trivial to swap scraping engines (e.g., Playwright, Selenium) or persistence layers.
+
+## When to Use This Scraper
+
+<CardGroup cols={2}>
+  <Card title="Use Cases" icon="check">
+    - Building movie analytics dashboards
+    - Training ML models on film data
+    - Creating recommendation systems
+    - Academic research on cinema trends
+    - Portfolio/demonstration projects
+  </Card>
+  <Card title="Not Suitable For" icon="xmark">
+    - Real-time production scraping (check IMDb's ToS)
+    - High-frequency data extraction
+    - Commercial resale of IMDb data
+    - Projects requiring live updates
+  </Card>
+</CardGroup>
+
+<Warning>
+This scraper is built for educational and demonstration purposes. Always respect website Terms of Service and robots.txt policies when scraping.
+</Warning>
+
+## Technology Stack
+
+- **Python 3.x** - Core language
+- **BeautifulSoup4** - HTML parsing
+- **Requests** - HTTP client with SOCKS proxy support
+- **PostgreSQL 15** - Relational database
+- **Docker & Docker Compose** - Container orchestration
+- **TOR** - Anonymous network routing
+- **ProtonVPN** - VPN integration via Gluetun
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="bolt" href="/quickstart">
+    Get the scraper running in 5 minutes with Docker
+  </Card>
+  <Card title="Architecture Deep Dive" icon="diagram-project" href="/architecture/overview">
+    Explore Clean Architecture implementation and design patterns
+  </Card>
+</CardGroup>
+
+---
+
+**Project Author:** Andrés Ruiz  
+**Email:** franklindbruiz@gmail.com  
+**GitHub:** [frankdevg](https://github.com/frankdevg)

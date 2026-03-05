@@ -1,0 +1,307 @@
+---
+title: Repository Interfaces
+description: Repository interfaces for movies, actors, and their relationships
+---
+
+## Overview
+
+Repository interfaces define the contract for data persistence operations. Concrete implementations can use CSV, PostgreSQL, or other storage mechanisms.
+
+## MovieRepository
+
+Interface for movie persistence operations.
+
+### Class Definition
+
+```python
+from abc import ABC, abstractmethod
+from typing import Optional
+from domain.models.movie import Movie
+
+class MovieRepository(ABC):
+    @abstractmethod
+    def save(self, movie: Movie) -> Movie:
+        pass
+    
+    @abstractmethod
+    def find_by_imdb_id(self, imdb_id: str) -> Optional[Movie]:
+        pass
+```
+
+**Source:** `domain/repositories/movie_repository.py:5-38`
+
+### Methods
+
+#### save
+
+Persists a movie and returns the saved entity with any generated fields.
+
+```python
+def save(self, movie: Movie) -> Movie
+```
+
+<ParamField path="movie" type="Movie" required>
+  Movie object containing the information to save.
+</ParamField>
+
+<ResponseField name="return" type="Movie">
+  The saved Movie entity, including any database-generated fields (e.g., `id`).
+</ResponseField>
+
+**Source:** `domain/repositories/movie_repository.py:13-25`
+
+#### find_by_imdb_id
+
+Searches for a movie by its IMDb ID to prevent duplicates.
+
+```python
+def find_by_imdb_id(self, imdb_id: str) -> Optional[Movie]
+```
+
+<ParamField path="imdb_id" type="str" required>
+  IMDb unique identifier (e.g., `tt0111161`).
+</ParamField>
+
+<ResponseField name="return" type="Optional[Movie]">
+  The Movie object if found, otherwise `None`.
+</ResponseField>
+
+**Source:** `domain/repositories/movie_repository.py:27-38`
+
+### Implementations
+
+- [MovieCsvRepository](/api/infrastructure/persistence#moviecsvrepository) - CSV file storage
+- [MoviePostgresRepository](/api/infrastructure/persistence#moviepostgresrepository) - PostgreSQL database
+
+---
+
+## ActorRepository
+
+Interface for actor persistence operations.
+
+### Class Definition
+
+```python
+from abc import ABC, abstractmethod
+from typing import Optional
+from domain.models.actor import Actor
+
+class ActorRepository(ABC):
+    @abstractmethod
+    def save(self, actor: Actor) -> Actor:
+        pass
+    
+    @abstractmethod
+    def find_by_name(self, name: str) -> Optional[Actor]:
+        pass
+```
+
+**Source:** `domain/repositories/actor_repository.py:5-28`
+
+### Methods
+
+#### save
+
+Persists an actor and returns the saved entity.
+
+```python
+def save(self, actor: Actor) -> Actor
+```
+
+<ParamField path="actor" type="Actor" required>
+  Actor object to save.
+</ParamField>
+
+<ResponseField name="return" type="Actor">
+  The saved Actor entity with database-generated ID.
+</ResponseField>
+
+**Source:** `domain/repositories/actor_repository.py:10-15`
+
+#### find_by_name
+
+Searches for an actor by name to prevent duplicates.
+
+```python
+def find_by_name(self, name: str) -> Optional[Actor]
+```
+
+<ParamField path="name" type="str" required>
+  Actor's full name to search for.
+</ParamField>
+
+<ResponseField name="return" type="Optional[Actor]">
+  The Actor object if found, otherwise `None`.
+</ResponseField>
+
+**Source:** `domain/repositories/actor_repository.py:17-28`
+
+### Implementations
+
+- [ActorCsvRepository](/api/infrastructure/persistence#actorcsvrepository) - CSV file storage
+- [ActorPostgresRepository](/api/infrastructure/persistence#actorpostgresrepository) - PostgreSQL database
+
+---
+
+## MovieActorRepository
+
+Interface for managing movie-actor relationships (N:M).
+
+### Class Definition
+
+```python
+from abc import ABC, abstractmethod
+from typing import List
+from domain.models.movie_actor import MovieActor
+
+class MovieActorRepository(ABC):
+    @abstractmethod
+    def save(self, relation: MovieActor) -> None:
+        pass
+    
+    @abstractmethod
+    def save_many(self, relations: List[MovieActor]) -> None:
+        pass
+```
+
+**Source:** `domain/repositories/movie_actor_repository.py:5-33`
+
+### Methods
+
+#### save
+
+Persists a single movie-actor relationship.
+
+```python
+def save(self, relation: MovieActor) -> None
+```
+
+<ParamField path="relation" type="MovieActor" required>
+  The relationship to persist.
+</ParamField>
+
+**Source:** `domain/repositories/movie_actor_repository.py:10-20`
+
+<Info>
+Useful for adding a single association. For bulk operations, use `save_many` for better performance.
+</Info>
+
+#### save_many
+
+Persists multiple movie-actor relationships efficiently.
+
+```python
+def save_many(self, relations: List[MovieActor]) -> None
+```
+
+<ParamField path="relations" type="List[MovieActor]" required>
+  List of MovieActor relationships to persist.
+</ParamField>
+
+**Source:** `domain/repositories/movie_actor_repository.py:22-33`
+
+<Tip>
+Preferred method when processing a movie with multiple actors, as it optimizes write operations.
+</Tip>
+
+### Implementations
+
+- [MovieActorCsvRepository](/api/infrastructure/persistence#movieactorcsvrepository) - CSV file storage
+- [MovieActorPostgresRepository](/api/infrastructure/persistence#movieactorpostgresrepository) - PostgreSQL database
+
+---
+
+## Usage Example
+
+```python
+from domain.models.movie import Movie
+from domain.models.actor import Actor
+from domain.models.movie_actor import MovieActor
+from infrastructure.persistence.csv.repositories import (
+    MovieCsvRepository,
+    ActorCsvRepository,
+    MovieActorCsvRepository
+)
+
+# Initialize repositories
+movie_repo = MovieCsvRepository()
+actor_repo = ActorCsvRepository()
+relation_repo = MovieActorCsvRepository()
+
+# Save a movie
+movie = Movie(
+    id=None,
+    imdb_id="tt0111161",
+    title="The Shawshank Redemption",
+    year=1994,
+    rating=9.3,
+    duration_minutes=142,
+    metascore=82,
+    actors=[]
+)
+saved_movie = movie_repo.save(movie)
+
+# Save actors and relationships
+for actor_name in ["Tim Robbins", "Morgan Freeman"]:
+    # Check if actor exists
+    existing_actor = actor_repo.find_by_name(actor_name)
+    if existing_actor:
+        saved_actor = existing_actor
+    else:
+        actor = Actor(id=None, name=actor_name)
+        saved_actor = actor_repo.save(actor)
+    
+    # Create relationship
+    relation = MovieActor(
+        movie_id=saved_movie.id,
+        actor_id=saved_actor.id
+    )
+    relation_repo.save(relation)
+```
+
+---
+
+## Repository Pattern Benefits
+
+### Abstraction
+
+Business logic doesn't depend on storage mechanism:
+
+```python
+class SaveMovieUseCase:
+    def __init__(self, movie_repository: MovieRepository):
+        self.repo = movie_repository  # Works with any implementation
+```
+
+### Testing
+
+Easy to create in-memory implementations for tests:
+
+```python
+class InMemoryMovieRepository(MovieRepository):
+    def __init__(self):
+        self.movies = {}
+    
+    def save(self, movie: Movie) -> Movie:
+        movie.id = len(self.movies) + 1
+        self.movies[movie.imdb_id] = movie
+        return movie
+    
+    def find_by_imdb_id(self, imdb_id: str) -> Optional[Movie]:
+        return self.movies.get(imdb_id)
+```
+
+### Flexibility
+
+Swap storage implementations without changing business logic:
+
+```python
+# Development: Use CSV
+repo = MovieCsvRepository()
+
+# Production: Use PostgreSQL
+repo = MoviePostgresRepository(connection)
+
+# Testing: Use in-memory
+repo = InMemoryMovieRepository()
+```

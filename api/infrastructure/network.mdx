@@ -1,0 +1,341 @@
+---
+title: Network Components
+description: Proxy provider and Tor rotator implementations for anonymous scraping
+---
+
+## Overview
+
+Network components provide proxy management and Tor IP rotation capabilities for anonymous web scraping.
+
+## ProxyProvider
+
+Implements `ProxyProviderInterface` to dynamically select and configure proxy connections.
+
+### Class Definition
+
+```python
+from domain.interfaces.proxy_interface import ProxyProviderInterface
+from typing import Optional, Dict
+
+class ProxyProvider(ProxyProviderInterface):
+    def __init__(self):
+        self.current_proxy: Optional[Dict[str, str]] = None
+```
+
+**Source:** `infrastructure/network/proxy_provider.py:11-22`
+
+### Supported Proxy Types
+
+1. **Authenticated Custom Proxy** - Username/password authentication
+2. **Tor Network** - SOCKS5 proxy via Tor
+3. **Proxy List** - Random selection from configured list
+4. **Direct Connection** - No proxy
+
+### Methods
+
+#### get_proxy
+
+Returns proxy configuration based on priority order.
+
+```python
+def get_proxy(self) -> Optional[Dict[str, str]]
+```
+
+<ResponseField name="return" type="Optional[Dict[str, str]]">
+  Proxy configuration dictionary for `requests` library, or `None` for direct connection.
+</ResponseField>
+
+**Source:** `infrastructure/network/proxy_provider.py:24-58`
+
+**Priority Order:**
+1. Custom authenticated proxy (if `config.USE_CUSTOM_PROXY`)
+2. Tor network (if `config.USE_TOR`)
+3. Random proxy from list (if `config.PROXY_LIST` exists)
+4. Direct connection (no proxy)
+
+**Example:**
+```python
+proxy_provider = ProxyProvider()
+proxy = proxy_provider.get_proxy()
+
+# With Tor enabled:
+# {'http': 'socks5h://127.0.0.1:9050', 'https': 'socks5h://127.0.0.1:9050'}
+
+# With custom proxy:
+# {'http': 'http://user:pass@proxy.example.com:8080',
+#  'https': 'http://user:pass@proxy.example.com:8080'}
+
+# Direct connection:
+# None
+```
+
+#### get_proxy_location
+
+Queries the public IP, city, and country of the current proxy.
+
+```python
+def get_proxy_location(self) -> tuple[str, str, str]
+```
+
+<ResponseField name="return" type="tuple[str, str, str]">
+  Tuple of (public IP, city, country). Returns `('N/A', 'N/A', 'N/A')` on error.
+</ResponseField>
+
+**Source:** `infrastructure/network/proxy_provider.py:60-82`
+
+**Uses:** `ipinfo.io` service to query geographic information.
+
+**Example:**
+```python
+ip, city, country = proxy_provider.get_proxy_location()
+print(f"IP: {ip}, Location: {city}, {country}")
+# Output: IP: 185.220.101.45, Location: Amsterdam, NL
+```
+
+---
+
+## TorRotator
+
+Implements `TorInterface` to control Tor network and rotate exit IPs.
+
+### Class Definition
+
+```python
+from stem import Signal
+from stem.control import Controller
+from domain.interfaces.tor_interface import TorInterface
+
+class TorRotator(TorInterface):
+    def __init__(self):
+        self.control_port = config.TOR_CONTROL_PORT
+        self.wait_time = config.TOR_WAIT_AFTER_ROTATION
+        self.max_retries = config.MAX_RETRIES
+        self.proxy = config.TOR_PROXY
+        self.host = config.TOR_HOST
+```
+
+**Source:** `infrastructure/network/tor_rotator.py:13-28`
+
+### Configuration
+
+```python
+config.TOR_CONTROL_PORT = 9051          # Tor control port
+config.TOR_WAIT_AFTER_ROTATION = 5      # Seconds to wait after rotation
+config.MAX_RETRIES = 3                  # Max rotation attempts
+config.TOR_PROXY = {                    # SOCKS5 proxy config
+    'http': 'socks5h://127.0.0.1:9050',
+    'https': 'socks5h://127.0.0.1:9050'
+}
+config.TOR_HOST = "tor"                 # Docker service name
+```
+
+### Methods
+
+#### get_current_ip
+
+Retrieves the current Tor exit IP without rotation.
+
+```python
+def get_current_ip(self) -> str
+```
+
+<ResponseField name="return" type="str">
+  Current Tor public IP address, or empty string on error.
+</ResponseField>
+
+**Source:** `infrastructure/network/tor_rotator.py:30-40`
+
+**Example:**
+```python
+tor = TorRotator()
+current_ip = tor.get_current_ip()
+print(f"Current Tor IP: {current_ip}")
+# Output: Current Tor IP: 185.220.101.45
+```
+
+#### rotate_ip
+
+Rotates the Tor circuit and returns the new exit IP.
+
+```python
+def rotate_ip(self) -> str
+```
+
+<ResponseField name="return" type="str">
+  New public IP after rotation, or original IP if rotation fails.
+</ResponseField>
+
+**Source:** `infrastructure/network/tor_rotator.py:61-87`
+
+**Process:**
+1. Gets current IP
+2. Sends NEWNYM signal to Tor control port
+3. Waits for configured time
+4. Verifies new IP is different
+5. Retries up to `max_retries` times
+
+**Example:**
+```python
+tor = TorRotator()
+original_ip = tor.get_current_ip()
+print(f"Original IP: {original_ip}")
+
+new_ip = tor.rotate_ip()
+print(f"New IP: {new_ip}")
+
+# Output:
+# [TOR] IP original antes de rotar: 185.220.101.45
+# [TOR] Enviando señal NEWNYM (Intento 1/3)
+# [TOR] Rotación exitosa: 185.220.101.45 → 198.98.51.189
+# New IP: 198.98.51.189
+```
+
+#### _send_newnym
+
+Internal method to send NEWNYM signal to Tor control port.
+
+```python
+def _send_newnym(self) -> bool
+```
+
+<ResponseField name="return" type="bool">
+  `True` if signal sent successfully, `False` on connection error.
+</ResponseField>
+
+**Source:** `infrastructure/network/tor_rotator.py:42-59`
+
+**Uses:** `stem` library to communicate with Tor controller.
+
+---
+
+## Docker Integration
+
+### Tor Service
+
+Requires Tor running in Docker container:
+
+```yaml
+services:
+  tor:
+    image: dperson/torproxy
+    ports:
+      - "9050:9050"  # SOCKS5 proxy
+      - "9051:9051"  # Control port
+    environment:
+      - TOR_ControlPort=9051
+```
+
+### Connection from App
+
+```python
+import socket
+
+tor_ip = socket.gethostbyname("tor")  # Resolves Docker service name
+with Controller.from_port(address=tor_ip, port=9051) as controller:
+    controller.authenticate()
+    controller.signal(Signal.NEWNYM)
+```
+
+**Source:** `infrastructure/network/tor_rotator.py:47-53`
+
+---
+
+## Error Handling
+
+### Proxy Selection Errors
+
+```python
+if not config.USE_CUSTOM_PROXY and not config.USE_TOR and not config.PROXY_LIST:
+    logger.warning("[PROXY] No se encontró proxy configurado. Usando conexión directa.")
+    return None
+```
+
+**Source:** `infrastructure/network/proxy_provider.py:52-54`
+
+### Tor Connection Errors
+
+```python
+try:
+    with Controller.from_port(address=tor_ip, port=self.control_port) as controller:
+        controller.authenticate()
+        controller.signal(Signal.NEWNYM)
+    return True
+except Exception as e:
+    logger.error(f"[TOR] No se pudo conectar al puerto de control de TOR: {e}")
+    return False
+```
+
+**Source:** `infrastructure/network/tor_rotator.py:51-59`
+
+### IP Rotation Failures
+
+```python
+for attempt in range(self.max_retries):
+    if not self._send_newnym():
+        return original_ip  # Stop retrying on connection failure
+    
+    new_ip = self.get_current_ip()
+    if new_ip and new_ip != original_ip:
+        logger.info(f"[TOR] Rotación exitosa: {original_ip} → {new_ip}")
+        return new_ip
+
+logger.warning("[TOR] No se logró rotar la IP después de todos los intentos.")
+return original_ip
+```
+
+**Source:** `infrastructure/network/tor_rotator.py:71-87`
+
+---
+
+## Usage Example
+
+```python
+from infrastructure.network.proxy_provider import ProxyProvider
+from infrastructure.network.tor_rotator import TorRotator
+import requests
+
+# Initialize components
+proxy_provider = ProxyProvider()
+tor_rotator = TorRotator()
+
+# Get proxy configuration
+proxy = proxy_provider.get_proxy()
+print(f"Using proxy: {proxy}")
+
+# Check location
+ip, city, country = proxy_provider.get_proxy_location()
+print(f"Location: {city}, {country} ({ip})")
+
+# Rotate Tor IP
+if proxy:
+    old_ip = tor_rotator.get_current_ip()
+    new_ip = tor_rotator.rotate_ip()
+    print(f"IP changed: {old_ip} → {new_ip}")
+
+# Make request with proxy
+response = requests.get(
+    "https://www.imdb.com/chart/top/",
+    proxies=proxy,
+    timeout=10
+)
+print(f"Response status: {response.status_code}")
+```
+
+---
+
+## Security Considerations
+
+<Warning>
+**Proxy Credentials:** Never commit proxy usernames/passwords to version control. Use environment variables:
+
+```python
+import os
+
+config.PROXY_USER = os.getenv("PROXY_USER")
+config.PROXY_PASS = os.getenv("PROXY_PASS")
+```
+</Warning>
+
+<Info>
+**Tor Anonymity:** While Tor provides anonymity, scraping behavior can still be detected. Use appropriate delays and request patterns.
+</Info>

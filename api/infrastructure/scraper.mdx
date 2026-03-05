@@ -1,0 +1,327 @@
+---
+title: IMDb Scraper
+description: Web scraper implementation for extracting movie data from IMDb
+---
+
+## Overview
+
+The `ImdbScraper` class implements the `ScraperInterface` to extract movie data from IMDb's Top 250 chart and individual movie pages.
+
+## ImdbScraper
+
+### Class Definition
+
+```python
+from domain.interfaces.scraper_interface import ScraperInterface
+from domain.interfaces.use_case_interface import UseCaseInterface
+from domain.interfaces.proxy_interface import ProxyProviderInterface
+from domain.interfaces.tor_interface import TorInterface
+from domain.models import Movie, Actor
+
+class ImdbScraper(ScraperInterface):
+    def __init__(
+        self,
+        use_case: UseCaseInterface,
+        proxy_provider: ProxyProviderInterface,
+        tor_rotator: TorInterface,
+        engine: str,
+        base_url: str = config.BASE_URL
+    ):
+        self.use_case = use_case
+        self.proxy_provider = proxy_provider
+        self.tor_rotator = tor_rotator
+        self.engine = engine
+        self.base_url = base_url
+        self.total_bytes_used = 0
+```
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:21-38`
+
+### Constructor
+
+<ParamField path="use_case" type="UseCaseInterface" required>
+  Use case for persisting scraped movies (e.g., save to CSV, PostgreSQL, or both).
+</ParamField>
+
+<ParamField path="proxy_provider" type="ProxyProviderInterface" required>
+  Provider for proxy configuration (Tor, custom proxy, or direct connection).
+</ParamField>
+
+<ParamField path="tor_rotator" type="TorInterface" required>
+  Tor network controller for IP rotation.
+</ParamField>
+
+<ParamField path="engine" type="str" required>
+  Storage engine identifier (e.g., "csv", "postgres", "composite").
+</ParamField>
+
+<ParamField path="base_url" type="str">
+  IMDb base URL. Defaults to `config.BASE_URL`.
+</ParamField>
+
+### Methods
+
+#### scrape
+
+Main scraping method that orchestrates the entire process.
+
+```python
+def scrape(self) -> None
+```
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:40-54`
+
+**Process:**
+1. Retrieves movie IDs from IMDb Top 250
+2. Scrapes details for each movie in parallel
+3. Passes movies to use case for persistence
+4. Logs total network traffic used
+
+**Example:**
+```python
+scraper = ImdbScraper(
+    use_case=composite_use_case,
+    proxy_provider=proxy_provider,
+    tor_rotator=tor_rotator,
+    engine="composite"
+)
+
+scraper.scrape()
+# Output:
+# Iniciando scraping desde IMDb...
+# [HTML] IDs obtenidos: 250
+# [GraphQL] IDs obtenidos: 250
+# Scraping completado.
+# Tráfico total usado: 15.42 MB
+```
+
+#### _scrape_movie_detail
+
+Extracts detailed information from a movie's IMDb page.
+
+```python
+def _scrape_movie_detail(self, indexed_id: tuple[int, str]) -> Optional[Movie]
+```
+
+<ParamField path="indexed_id" type="tuple[int, str]" required>
+  Tuple of (index, imdb_id) for tracking progress.
+</ParamField>
+
+<ResponseField name="return" type="Optional[Movie]">
+  Parsed Movie object with actors, or `None` if scraping fails.
+</ResponseField>
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:67-130`
+
+**Extracted Fields:**
+- **title** - Using CSS selector from config
+- **year** - Extracted from year tag with regex `\d{4}`
+- **rating** - IMDb rating (0.0-10.0)
+- **metascore** - Metascore rating (0-100) if available
+- **duration_minutes** - Parsed from "2h 22m" format
+- **actors** - Top 3 actors from cast list
+
+**Example:**
+```python
+movie = scraper._scrape_movie_detail((1, "tt0111161"))
+print(movie.title)  # "The Shawshank Redemption"
+print(movie.rating)  # 9.3
+print(len(movie.actors))  # 3
+```
+
+#### _get_combined_movie_ids
+
+Retrieves movie IDs using both HTML parsing and GraphQL API.
+
+```python
+def _get_combined_movie_ids(self) -> List[str]
+```
+
+<ResponseField name="return" type="List[str]">
+  Unique list of IMDb IDs (e.g., `["tt0111161", "tt0068646", ...]`).
+</ResponseField>
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:132-156`
+
+**Process:**
+1. Fetches IMDb Top 250 chart page
+2. Extracts IDs from HTML using CSS selectors
+3. Calls GraphQL endpoint for additional IDs
+4. Returns deduplicated set of IDs
+
+**Example:**
+```python
+ids = scraper._get_combined_movie_ids()
+print(len(ids))  # 250 (or more)
+print(ids[0])    # "tt0111161"
+```
+
+#### _fetch_graphql_ids
+
+Fetches movie IDs from IMDb's GraphQL API.
+
+```python
+def _fetch_graphql_ids(self, cookies: Optional[requests.cookies.RequestsCookieJar]) -> List[str]
+```
+
+<ParamField path="cookies" type="Optional[RequestsCookieJar]">
+  Session cookies from initial HTML request.
+</ParamField>
+
+<ResponseField name="return" type="List[str]">
+  List of IMDb IDs from GraphQL response.
+</ResponseField>
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:158-184`
+
+**GraphQL Query:**
+```python
+payload = {
+    "operationName": config.GRAPHQL_OPERATION,
+    "variables": {
+        "first": config.NUM_MOVIES,
+        "isInPace": False,
+        "locale": config.GRAPHQL_LOCALE
+    },
+    "extensions": {
+        "persistedQuery": {
+            "sha256Hash": config.GRAPHQL_HASH,
+            "version": config.GRAPHQL_VERSION
+        }
+    }
+}
+```
+
+---
+
+## Configuration
+
+The scraper relies on configuration from `shared.config.config`:
+
+```python
+from shared.config import config
+
+config.BASE_URL              # "https://www.imdb.com"
+config.CHART_TOP_PATH        # "/chart/top/"
+config.TITLE_DETAIL_PATH     # "/title/{id}/"
+config.NUM_MOVIES            # 250
+config.MAX_THREADS           # 5
+config.GRAPHQL_URL           # GraphQL endpoint
+config.SELECTORS             # CSS selectors for parsing
+```
+
+### CSS Selectors
+
+```python
+config.SELECTORS = {
+    "title": "h1[data-testid='hero__pageTitle'] span",
+    "year": "a[href*='releaseinfo']",
+    "rating": "div[data-testid='hero-rating-bar__aggregate-rating__score'] span",
+    "metascore": "span.score-meta",
+    "duration_container": "ul.ipc-inline-list",
+    "actors": "a[data-testid='title-cast-item__actor']"
+}
+```
+
+---
+
+## Thread Safety
+
+The scraper uses `ThreadPoolExecutor` for concurrent scraping:
+
+```python
+with ThreadPoolExecutor(max_workers=config.MAX_THREADS) as executor:
+    executor.map(
+        self._scrape_and_save_movie_detail,
+        enumerate(movie_ids[:config.NUM_MOVIES], start=1)
+    )
+```
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:47-51`
+
+<Warning>
+Ensure repositories are thread-safe. CSV repositories use locks; PostgreSQL uses connection pooling.
+</Warning>
+
+---
+
+## Error Handling
+
+### Validation Errors
+
+Caught when domain models reject invalid data:
+
+```python
+try:
+    movie = self._scrape_movie_detail(indexed_id)
+    if movie:
+        self.use_case.execute(movie)
+except ValueError as e:
+    logger.warning(f"Datos inválidos para {imdb_id}: {e}. Saltando guardado.")
+```
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:58-63`
+
+### Network Errors
+
+Handled by `make_request` utility:
+
+```python
+response = make_request(
+    url=detail_url,
+    proxy_provider=self.proxy_provider,
+    tor_rotator=self.tor_rotator
+)
+
+if not response:
+    logger.warning(f"No se pudo obtener respuesta para la URL: {detail_url}")
+    return None
+```
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:71-79`
+
+---
+
+## Network Usage Tracking
+
+Tracks total bytes downloaded:
+
+```python
+self.total_bytes_used += len(response.content)
+
+# At end of scraping:
+logger.info(f"Tráfico total usado: {self.total_bytes_used / (1024 ** 2):.2f} MB")
+```
+
+**Source:** `infrastructure/scraper/imdb_scraper.py:81` and `:54`
+
+---
+
+## Complete Example
+
+```python
+from infrastructure.scraper.imdb_scraper import ImdbScraper
+from infrastructure.network.proxy_provider import ProxyProvider
+from infrastructure.network.tor_rotator import TorRotator
+from application.use_cases import CompositeSaveMovieWithActorsUseCase
+from shared.config import config
+
+# Initialize dependencies
+proxy_provider = ProxyProvider()
+tor_rotator = TorRotator()
+use_case = CompositeSaveMovieWithActorsUseCase(
+    use_cases=[csv_use_case, postgres_use_case]
+)
+
+# Create scraper
+scraper = ImdbScraper(
+    use_case=use_case,
+    proxy_provider=proxy_provider,
+    tor_rotator=tor_rotator,
+    engine="composite",
+    base_url=config.BASE_URL
+)
+
+# Execute scraping
+scraper.scrape()
+```

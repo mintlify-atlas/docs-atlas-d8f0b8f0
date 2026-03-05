@@ -1,0 +1,618 @@
+---
+title: Installation
+description: Detailed installation instructions for the IMDb Scraper with Docker and manual Python setup options
+---
+
+## Installation Overview
+
+The IMDb Scraper can be deployed in two ways:
+
+1. **Docker Compose** (Recommended) - Fully automated, production-ready deployment
+2. **Manual Python Setup** - For local development and debugging
+
+<Info>
+Docker Compose is the recommended approach as it handles all dependencies, networking, and service orchestration automatically.
+</Info>
+
+## System Requirements
+
+### Minimum Requirements
+
+- **OS**: Linux (Ubuntu 20.04+), macOS (10.15+), or Windows 10/11 with WSL2
+- **RAM**: 2GB minimum, 4GB recommended
+- **Disk Space**: 5GB free (for Docker images and data)
+- **CPU**: 2 cores minimum, 4+ recommended for optimal concurrency
+- **Network**: Stable internet connection (bandwidth ~100MB for 250 movies)
+
+### Software Dependencies
+
+<Tabs>
+  <Tab title="Docker Installation">
+    - Docker Engine 20.10+
+    - Docker Compose 1.29+ (or Docker Compose V2)
+    - Git
+  </Tab>
+  <Tab title="Manual Installation">
+    - Python 3.8+
+    - PostgreSQL 12+
+    - pip package manager
+    - virtualenv (recommended)
+    - TOR (optional, for IP rotation)
+  </Tab>
+</Tabs>
+
+## Docker Installation (Recommended)
+
+<Steps>
+
+<Step title="Install Docker">
+
+<Tabs>
+  <Tab title="Ubuntu/Debian">
+    ```bash
+    # Update package index
+    sudo apt update
+    
+    # Install prerequisites
+    sudo apt install -y ca-certificates curl gnupg lsb-release
+    
+    # Add Docker's official GPG key
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+      sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    
+    # Set up repository
+    echo "deb [arch=$(dpkg --print-architecture) \
+      signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | \
+      sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Install Docker Engine
+    sudo apt update
+    sudo apt install -y docker-ce docker-ce-cli containerd.io \
+      docker-compose-plugin
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    # Install Homebrew if not already installed
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    
+    # Install Docker Desktop
+    brew install --cask docker
+    
+    # Start Docker Desktop from Applications
+    open /Applications/Docker.app
+    ```
+  </Tab>
+  
+  <Tab title="Windows (WSL2)">
+    1. Install WSL2:
+    ```powershell
+    wsl --install
+    ```
+    
+    2. Download and install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop)
+    
+    3. Enable WSL2 backend in Docker Desktop settings
+    
+    4. Restart your system
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Verify Docker Installation">
+
+```bash
+# Check Docker version
+docker --version
+
+# Check Docker Compose version
+docker compose version
+
+# Test Docker with hello-world
+docker run hello-world
+```
+
+Expected output:
+```
+Docker version 24.0.x, build xxxxx
+Docker Compose version v2.x.x
+Hello from Docker!
+```
+
+</Step>
+
+<Step title="Clone the Repository">
+
+```bash
+# Clone the repository
+git clone https://github.com/frankdevg/imdb-scraper.git
+
+# Navigate to project directory
+cd imdb-scraper
+
+# Verify project structure
+ls -la
+```
+
+You should see:
+```
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+├── .env.example
+├── application/
+├── domain/
+├── infrastructure/
+├── presentation/
+├── shared/
+├── sql/
+└── data/
+```
+
+</Step>
+
+<Step title="Configure Environment">
+
+Create your `.env` file from the example template:
+
+```bash
+cp .env.example .env
+nano .env  # or use your preferred editor
+```
+
+Configure the following variables:
+
+```env .env
+# Database Configuration
+POSTGRES_DB=imdb_scraper
+POSTGRES_USER=your_username
+POSTGRES_PASSWORD=your_secure_password
+POSTGRES_PORT=5432
+POSTGRES_HOST=postgres
+
+# Proxy Configuration (Optional - DataImpulse)
+PROXY_HOST=gw.dataimpulse.com
+PROXY_PORT=823
+PROXY_USER=your_proxy_username
+PROXY_PASS=your_proxy_password
+
+# VPN Configuration (Optional - ProtonVPN)
+VPN_PROVIDER=protonvpn
+VPN_USERNAME=your_vpn_username
+VPN_PASSWORD=your_vpn_password
+VPN_COUNTRY=Argentina
+```
+
+<Note>
+If you don't have proxy or VPN credentials, the scraper will automatically fall back to the TOR network for IP rotation.
+</Note>
+
+</Step>
+
+<Step title="Build and Deploy">
+
+```bash
+# Build the Docker images
+docker-compose build --no-cache
+
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f scraper
+```
+
+The scraper will automatically:
+- Initialize PostgreSQL with schema
+- Connect to TOR/VPN/proxies
+- Scrape IMDb Top 250
+- Save data to CSV and database
+
+</Step>
+
+<Step title="Verify Installation">
+
+**Check running containers:**
+```bash
+docker-compose ps
+```
+
+Expected output:
+```
+NAME                COMMAND                  SERVICE   STATUS
+imdb_postgres       "docker-entrypoint.s…"   postgres  Up
+imdb_scraper        "/bin/sh -c 'echo 'E…"   scraper   Up
+tor_proxy           "tor --SocksPort 0.0…"   tor       Up
+vpn                 "/gluetun-entrypoint…"   vpn       Up
+```
+
+**Verify data extraction:**
+```bash
+# Check CSV files
+ls -lh data/
+
+# Check database records
+docker exec -it imdb_postgres psql -U your_username -d imdb_scraper \
+  -c "SELECT title, year, rating FROM movies LIMIT 5;"
+```
+
+</Step>
+
+</Steps>
+
+## Manual Python Installation
+
+For local development or environments without Docker:
+
+<Steps>
+
+<Step title="Install Python and PostgreSQL">
+
+<Tabs>
+  <Tab title="Ubuntu/Debian">
+    ```bash
+    # Install Python 3 and pip
+    sudo apt update
+    sudo apt install -y python3 python3-pip python3-venv
+    
+    # Install PostgreSQL
+    sudo apt install -y postgresql postgresql-contrib
+    
+    # Start PostgreSQL service
+    sudo systemctl start postgresql
+    sudo systemctl enable postgresql
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    # Install Python via Homebrew
+    brew install python@3.11
+    
+    # Install PostgreSQL
+    brew install postgresql@15
+    
+    # Start PostgreSQL
+    brew services start postgresql@15
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    1. Download Python from [python.org](https://www.python.org/downloads/)
+    2. Download PostgreSQL from [postgresql.org](https://www.postgresql.org/download/windows/)
+    3. Install both with default settings
+    4. Add Python to PATH during installation
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Set Up Database">
+
+```bash
+# Connect to PostgreSQL
+sudo -u postgres psql
+
+# Create database and user
+CREATE DATABASE imdb_scraper;
+CREATE USER your_username WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE imdb_scraper TO your_username;
+\q
+```
+
+Initialize schema:
+```bash
+psql -U your_username -d imdb_scraper -f sql/01_schema.sql
+psql -U your_username -d imdb_scraper -f sql/02_procedures.sql
+psql -U your_username -d imdb_scraper -f sql/03_views.sql
+```
+
+</Step>
+
+<Step title="Create Virtual Environment">
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate  # Linux/macOS
+# or
+venv\Scripts\activate  # Windows
+
+# Upgrade pip
+pip install --upgrade pip
+```
+
+</Step>
+
+<Step title="Install Python Dependencies">
+
+```bash
+# Install from requirements.txt
+pip install -r requirements.txt
+```
+
+Dependencies installed:
+```
+requests          # HTTP client
+bs4               # HTML parsing
+psycopg2-binary   # PostgreSQL adapter
+python-dotenv     # Environment variable management
+stem              # TOR control library
+requests[socks]   # SOCKS proxy support
+```
+
+</Step>
+
+<Step title="Configure Environment Variables">
+
+Create `.env` file in project root:
+
+```env .env
+POSTGRES_DB=imdb_scraper
+POSTGRES_USER=your_username
+POSTGRES_PASSWORD=your_password
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+
+# Optional: Configure proxies/VPN if available
+PROXY_HOST=
+PROXY_PORT=
+PROXY_USER=
+PROXY_PASS=
+```
+
+</Step>
+
+<Step title="Run the Scraper">
+
+```bash
+# Execute the scraper
+python presentation/cli/run_scraper.py
+```
+
+Monitor output:
+```log
+INFO - Inicializando contenedor de dependencias...
+INFO - Construyendo scraper...
+INFO - Iniciando proceso de scraping...
+INFO - [HTML] IDs obtenidos: 250
+INFO - Tráfico total usado: 15.42 MB
+INFO - Proceso de scraping finalizado exitosamente.
+```
+
+</Step>
+
+</Steps>
+
+## Optional: TOR Installation (Manual Setup)
+
+For IP rotation without Docker:
+
+<Tabs>
+  <Tab title="Ubuntu/Debian">
+    ```bash
+    sudo apt install -y tor
+    sudo systemctl start tor
+    sudo systemctl enable tor
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    brew install tor
+    brew services start tor
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    Download Tor Expert Bundle from [torproject.org](https://www.torproject.org/download/tor/)
+  </Tab>
+</Tabs>
+
+Configure TOR in `shared/config/config.py`:
+```python
+TOR_HOST = "localhost"
+TOR_PROXY_PORT = 9050
+TOR_CONTROL_PORT = 9051
+```
+
+## Verification Steps
+
+After installation, verify all components:
+
+<Steps>
+
+<Step title="Test Database Connection">
+
+```bash
+# Docker installation
+docker exec -it imdb_postgres psql -U your_username -d imdb_scraper -c "SELECT version();"
+
+# Manual installation
+psql -U your_username -d imdb_scraper -c "SELECT version();"
+```
+
+</Step>
+
+<Step title="Test TOR Connection (Optional)">
+
+```bash
+# Check TOR SOCKS proxy
+curl --socks5 localhost:9050 https://check.torproject.org/api/ip
+```
+
+Expected response:
+```json
+{"IsTor": true, "IP": "xxx.xxx.xxx.xxx"}
+```
+
+</Step>
+
+<Step title="Validate Data Output">
+
+```bash
+# Check CSV files exist
+ls -lh data/*.csv
+
+# Verify database records
+psql -U your_username -d imdb_scraper -c \
+  "SELECT COUNT(*) FROM movies;"
+```
+
+</Step>
+
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Docker daemon not running">
+  **Error:** `Cannot connect to the Docker daemon`
+  
+  **Solution:**
+  ```bash
+  # Linux
+  sudo systemctl start docker
+  
+  # macOS
+  open /Applications/Docker.app
+  
+  # Windows
+  # Start Docker Desktop from Start Menu
+  ```
+</Accordion>
+
+<Accordion title="Permission denied errors (Docker)">
+  **Error:** `Got permission denied while trying to connect to the Docker daemon socket`
+  
+  **Solution:**
+  ```bash
+  # Add user to docker group
+  sudo usermod -aG docker $USER
+  
+  # Log out and back in, or run:
+  newgrp docker
+  ```
+</Accordion>
+
+<Accordion title="PostgreSQL connection refused">
+  **Error:** `psql: error: connection to server at "localhost" port 5432 failed`
+  
+  **Solution:**
+  ```bash
+  # Check if PostgreSQL is running
+  sudo systemctl status postgresql
+  
+  # Start if not running
+  sudo systemctl start postgresql
+  
+  # Check port binding
+  sudo netstat -plnt | grep 5432
+  ```
+</Accordion>
+
+<Accordion title="Python module import errors">
+  **Error:** `ModuleNotFoundError: No module named 'bs4'`
+  
+  **Solution:**
+  ```bash
+  # Ensure virtual environment is activated
+  source venv/bin/activate
+  
+  # Reinstall dependencies
+  pip install -r requirements.txt
+  ```
+</Accordion>
+
+<Accordion title="TOR connection timeout">
+  **Error:** `SOCKSHTTPConnectionPool: Max retries exceeded`
+  
+  **Solution:**
+  ```bash
+  # Restart TOR service
+  sudo systemctl restart tor
+  
+  # Verify TOR is listening
+  sudo netstat -plnt | grep 9050
+  
+  # Test TOR connectivity
+  curl --socks5 localhost:9050 https://check.torproject.org/
+  ```
+</Accordion>
+
+<Accordion title="CSV files empty or missing">
+  **Error:** CSV files exist but have no data
+  
+  **Solution:**
+  - Check scraper logs for validation errors
+  - IMDb may have changed HTML structure (update selectors in `config.py`)
+  - Network issues prevented data retrieval (check proxy/VPN settings)
+  
+  ```bash
+  # View detailed logs
+  tail -f logs/scraper.log
+  ```
+</Accordion>
+
+<Accordion title="Out of memory errors">
+  **Error:** `MemoryError` or container crashes
+  
+  **Solution:**
+  - Reduce `MAX_THREADS` in `shared/config/config.py` (default: 50)
+  - Increase Docker memory limit in Docker Desktop settings
+  - Process movies in smaller batches by reducing `NUM_MOVIES`
+</Accordion>
+
+</AccordionGroup>
+
+## Performance Tuning
+
+Optimize scraper performance based on your system:
+
+```python
+# shared/config/config.py
+
+# Adjust concurrent threads (default: 50)
+MAX_THREADS = 30  # Lower for limited resources
+
+# Modify retry behavior
+MAX_RETRIES = 3
+RETRY_DELAYS = [1, 3, 5]  # seconds
+
+# Request timeout
+REQUEST_TIMEOUT = 10  # seconds
+
+# Scrape subset for testing
+NUM_MOVIES = 50  # Default: 250
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="gear" href="/deployment/environment-variables">
+    Customize scraping behavior, selectors, and network settings
+  </Card>
+  <Card title="Architecture Overview" icon="diagram-project" href="/architecture/overview">
+    Understand Clean Architecture and DDD implementation
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/domain/models">
+    Explore domain models, interfaces, and use cases
+  </Card>
+  <Card title="SQL Analytics" icon="database" href="/data/analytical-queries">
+    Run advanced analytical queries on scraped data
+  </Card>
+</CardGroup>
+
+---
+
+<Info>
+For issues not covered here, check the [GitHub Issues](https://github.com/frankdevg/imdb-scraper/issues) or contact franklindbruiz@gmail.com
+</Info>

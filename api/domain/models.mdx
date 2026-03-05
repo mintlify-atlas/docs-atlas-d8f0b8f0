@@ -1,0 +1,224 @@
+---
+title: Domain Models
+description: Core domain models representing movies, actors, and their relationships
+---
+
+## Overview
+
+The domain models represent the core business entities in the IMDb scraper. Each model includes built-in validation to ensure data integrity.
+
+## Movie
+
+Represents a movie entity with comprehensive metadata and validation.
+
+### Class Definition
+
+```python
+from dataclasses import dataclass, field
+from typing import Optional, List
+from domain.models.actor import Actor
+
+@dataclass
+class Movie:
+    id: Optional[int]
+    imdb_id: str
+    title: str
+    year: int
+    rating: float
+    duration_minutes: Optional[int]
+    metascore: Optional[int]
+    actors: List[Actor] = field(default_factory=list)
+```
+
+**Source:** `domain/models/movie.py:8-20`
+
+### Fields
+
+<ParamField path="id" type="Optional[int]">
+  Database-assigned unique identifier. `None` for new movies.
+</ParamField>
+
+<ParamField path="imdb_id" type="str" required>
+  IMDb unique identifier (e.g., `tt0111161`). Must match pattern `^tt\d{7,}$`.
+</ParamField>
+
+<ParamField path="title" type="str" required>
+  Movie title. Cannot be empty after stripping whitespace.
+</ParamField>
+
+<ParamField path="year" type="int" required>
+  Release year. Must be between 1888 and 2030.
+</ParamField>
+
+<ParamField path="rating" type="float" required>
+  IMDb rating. Must be between 0.0 and 10.0.
+</ParamField>
+
+<ParamField path="duration_minutes" type="Optional[int]">
+  Runtime in minutes. Must be positive if provided.
+</ParamField>
+
+<ParamField path="metascore" type="Optional[int]">
+  Metascore rating. Must be between 0 and 100 if provided.
+</ParamField>
+
+<ParamField path="actors" type="List[Actor]">
+  List of actors appearing in the movie. Defaults to empty list.
+</ParamField>
+
+### Validation
+
+The `__post_init__` method performs automatic validation:
+
+- Strips whitespace from `title` and `imdb_id`
+- Validates IMDb ID format with regex `^tt\d{7,}$`
+- Ensures title is not empty
+- Validates year range (1888-2030)
+- Validates rating range (0.0-10.0)
+- Validates duration is positive
+- Validates metascore range (0-100)
+
+**Source:** `domain/models/movie.py:22-42`
+
+### Example
+
+```python
+from domain.models.movie import Movie
+from domain.models.actor import Actor
+
+movie = Movie(
+    id=None,
+    imdb_id="tt0111161",
+    title="The Shawshank Redemption",
+    year=1994,
+    rating=9.3,
+    duration_minutes=142,
+    metascore=82,
+    actors=[
+        Actor(id=None, name="Tim Robbins"),
+        Actor(id=None, name="Morgan Freeman")
+    ]
+)
+```
+
+---
+
+## Actor
+
+Represents an actor entity with name validation.
+
+### Class Definition
+
+```python
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class Actor:
+    id: Optional[int]
+    name: str
+```
+
+**Source:** `domain/models/actor.py:6-12`
+
+### Fields
+
+<ParamField path="id" type="Optional[int]">
+  Database-assigned unique identifier. `None` for new actors.
+</ParamField>
+
+<ParamField path="name" type="str" required>
+  Actor's full name. Cannot be empty after stripping whitespace.
+</ParamField>
+
+### Validation
+
+The `__post_init__` method performs automatic validation:
+
+- Strips whitespace from `name`
+- Ensures name is not empty
+
+**Source:** `domain/models/actor.py:14-18`
+
+### Example
+
+```python
+from domain.models.actor import Actor
+
+actor = Actor(
+    id=None,
+    name="Morgan Freeman"
+)
+```
+
+---
+
+## MovieActor
+
+Represents the many-to-many relationship between movies and actors.
+
+### Class Definition
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class MovieActor:
+    movie_id: int
+    actor_id: int
+```
+
+**Source:** `domain/models/movie_actor.py:5-11`
+
+### Fields
+
+<ParamField path="movie_id" type="int" required>
+  Foreign key reference to a movie. Must be a positive integer.
+</ParamField>
+
+<ParamField path="actor_id" type="int" required>
+  Foreign key reference to an actor. Must be a positive integer.
+</ParamField>
+
+### Validation
+
+The `__post_init__` method validates both IDs:
+
+- Ensures `movie_id` is a positive integer
+- Ensures `actor_id` is a positive integer
+
+**Source:** `domain/models/movie_actor.py:13-19`
+
+### Example
+
+```python
+from domain.models.movie_actor import MovieActor
+
+relation = MovieActor(
+    movie_id=1,
+    actor_id=5
+)
+```
+
+---
+
+## Error Handling
+
+All models raise `ValueError` when validation fails:
+
+```python
+try:
+    movie = Movie(
+        id=None,
+        imdb_id="invalid",  # Invalid format
+        title="Test",
+        year=2024,
+        rating=8.5,
+        duration_minutes=120,
+        metascore=70,
+        actors=[]
+    )
+except ValueError as e:
+    print(f"Validation error: {e}")
+    # Output: Validation error: IMDb ID inválido: 'invalid'
+```

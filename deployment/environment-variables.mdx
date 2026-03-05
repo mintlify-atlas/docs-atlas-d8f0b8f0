@@ -1,0 +1,312 @@
+---
+title: "Environment Variables"
+description: "Complete reference for configuring the IMDb Scraper environment"
+---
+
+All sensitive configuration is managed through environment variables in a `.env` file at the project root.
+
+## Creating the .env File
+
+Create a `.env` file in the root directory with the following structure:
+
+```env
+# PostgreSQL Database Configuration
+POSTGRES_DB=imdb_scraper
+POSTGRES_USER=aruiz
+POSTGRES_PASSWORD=@ndresruiz@123
+POSTGRES_PORT=5432
+POSTGRES_HOST=postgres
+
+# Premium Proxy Configuration (DataImpulse)
+PROXY_HOST=gw.dataimpulse.com
+PROXY_PORT=823
+PROXY_USER=f1bdc8e207aafe131216
+PROXY_PASS=6c1b9cdd85f65f0b
+
+# VPN Configuration (ProtonVPN)
+VPN_PROVIDER=protonvpn
+VPN_USERNAME=qlT5gZGnlHi2Y1uh
+VPN_PASSWORD=mUiXGzoM9SeYHhYocElsEMuQwUUGuLFL
+VPN_COUNTRY=Argentina
+```
+
+<Warning>
+  The credentials shown above are **examples for evaluation purposes only**. In production, use your own credentials and manage them securely using Docker Secrets, AWS Parameter Store, or a secrets management service.
+</Warning>
+
+## Configuration Reference
+
+### PostgreSQL Configuration
+
+Database connection settings used by both the `postgres` service and the `scraper` service.
+
+<ParamField path="POSTGRES_DB" type="string" default="imdb_scraper" required>
+  Name of the PostgreSQL database to create and use for storing scraped data.
+</ParamField>
+
+<ParamField path="POSTGRES_USER" type="string" default="aruiz" required>
+  PostgreSQL username with read/write permissions on the database.
+</ParamField>
+
+<ParamField path="POSTGRES_PASSWORD" type="string" required>
+  Password for the PostgreSQL user. Use a strong, unique password in production.
+</ParamField>
+
+<ParamField path="POSTGRES_PORT" type="number" default="5432" required>
+  External port to expose PostgreSQL. Maps to internal port 5432.
+</ParamField>
+
+<ParamField path="POSTGRES_HOST" type="string" default="postgres" required>
+  Hostname of the PostgreSQL service. Use `postgres` when running in Docker Compose (service name), or `localhost` when connecting from host machine.
+</ParamField>
+
+### Proxy Configuration
+
+Settings for premium proxy service (DataImpulse or similar providers) used as the primary anonymity layer.
+
+<ParamField path="PROXY_HOST" type="string">
+  Hostname or IP address of the proxy gateway. Example: `gw.dataimpulse.com`
+</ParamField>
+
+<ParamField path="PROXY_PORT" type="number">
+  Port number for the proxy service. Typically `823` for HTTP/HTTPS proxies.
+</ParamField>
+
+<ParamField path="PROXY_USER" type="string">
+  Username/API key for authenticating with the proxy service.
+</ParamField>
+
+<ParamField path="PROXY_PASS" type="string">
+  Password/secret for authenticating with the proxy service.
+</ParamField>
+
+<Note>
+  If all proxy variables (`PROXY_HOST`, `PROXY_PORT`, `PROXY_USER`, `PROXY_PASS`) are set, the scraper will use the premium proxy. Otherwise, it falls back to TOR.
+</Note>
+
+### VPN Configuration
+
+Settings for the Gluetun VPN container, providing an additional layer of geolocation masking.
+
+<ParamField path="VPN_PROVIDER" type="string" default="protonvpn">
+  VPN service provider. Supported values include:
+  - `protonvpn`
+  - `nordvpn`
+  - `expressvpn`
+  - `surfshark`
+  - And many others supported by Gluetun
+</ParamField>
+
+<ParamField path="VPN_USERNAME" type="string" required>
+  OpenVPN username or API key provided by your VPN service.
+</ParamField>
+
+<ParamField path="VPN_PASSWORD" type="string" required>
+  OpenVPN password or secret provided by your VPN service.
+</ParamField>
+
+<ParamField path="VPN_COUNTRY" type="string" default="Argentina">
+  Preferred country for VPN server selection. Examples: `Argentina`, `United States`, `Switzerland`
+</ParamField>
+
+## Application Configuration (config.py)
+
+The scraper reads environment variables through `shared/config/config.py`, which also defines hardcoded constants:
+
+### Scraping Engine
+
+```python
+SCRAPER_ENGINE="requests"  # Can be "playwright" or "selenium"
+```
+
+### Request Settings
+
+```python
+MAX_RETRIES = 3
+RETRY_DELAYS = [1, 3, 5]  # Exponential backoff in seconds
+REQUEST_TIMEOUT = 10
+MAX_THREADS = 50
+BLOCK_CODES = [202, 403, 404, 429, 500]
+```
+
+### TOR Configuration
+
+```python
+TOR_HOST="tor"
+TOR_CONTROL_PORT=9051
+TOR_PROXY_PORT=9050
+TOR_WAIT_AFTER_ROTATION = 12  # seconds
+```
+
+### Database Connection Pooling
+
+```python
+POSTGRES_MAX_CONNECTIONS = 10
+```
+
+See `shared/config/config.py:1` for the complete configuration.
+
+## Usage in Docker Compose
+
+Environment variables are injected into containers via:
+
+### Direct Environment Block
+
+```yaml
+postgres:
+  environment:
+    POSTGRES_DB: ${POSTGRES_DB}
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+```
+
+### Env File Reference
+
+```yaml
+scraper:
+  env_file:
+    - .env
+```
+
+This makes all variables in `.env` available to the scraper container.
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Never Commit .env" icon="ban">
+    Ensure `.env` is in `.gitignore` to prevent credential leaks
+  </Card>
+  <Card title="Use Strong Passwords" icon="shield">
+    Generate passwords with at least 16 characters, mixed case, numbers, and symbols
+  </Card>
+  <Card title="Rotate Credentials" icon="rotate">
+    Change passwords and API keys periodically, especially after sharing access
+  </Card>
+  <Card title="Limit Permissions" icon="lock">
+    Database users should only have necessary permissions (no SUPERUSER)
+  </Card>
+</CardGroup>
+
+### Production Secrets Management
+
+For production deployments, replace `.env` with:
+
+<Tabs>
+  <Tab title="Docker Secrets">
+    ```yaml
+    services:
+      postgres:
+        secrets:
+          - postgres_password
+        environment:
+          POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    
+    secrets:
+      postgres_password:
+        external: true
+    ```
+  </Tab>
+  
+  <Tab title="AWS Parameter Store">
+    ```python
+    import boto3
+    
+    ssm = boto3.client('ssm')
+    response = ssm.get_parameter(
+        Name='/imdb-scraper/postgres/password',
+        WithDecryption=True
+    )
+    POSTGRES_PASSWORD = response['Parameter']['Value']
+    ```
+  </Tab>
+  
+  <Tab title="HashiCorp Vault">
+    ```python
+    import hvac
+    
+    client = hvac.Client(url='https://vault.example.com')
+    secret = client.secrets.kv.v2.read_secret_version(
+        path='imdb-scraper/postgres'
+    )
+    POSTGRES_PASSWORD = secret['data']['data']['password']
+    ```
+  </Tab>
+</Tabs>
+
+## Validation
+
+The application validates critical environment variables at startup:
+
+```python
+USE_CUSTOM_PROXY = all([PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS])
+USE_TOR = not USE_CUSTOM_PROXY
+```
+
+If proxy variables are incomplete, the scraper automatically falls back to TOR.
+
+## Testing Configuration
+
+Verify your environment setup:
+
+<Steps>
+  <Step title="Load Environment">
+    ```bash
+    docker-compose config
+    ```
+    This shows the resolved configuration with environment variables interpolated.
+  </Step>
+  
+  <Step title="Test Database Connection">
+    ```bash
+    docker-compose up -d postgres
+    docker exec -it imdb_postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT version();"
+    ```
+  </Step>
+  
+  <Step title="Check VPN Connection">
+    ```bash
+    docker-compose up -d vpn
+    docker logs vpn | grep "Connected"
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Variable Not Found
+
+```bash
+# Check if .env exists
+ls -la .env
+
+# Verify variable names match exactly (case-sensitive)
+cat .env | grep POSTGRES_DB
+```
+
+### Database Authentication Failed
+
+```bash
+# Ensure password has no trailing spaces
+echo "$POSTGRES_PASSWORD" | wc -c
+
+# Test connection manually
+PGPASSWORD=your_password psql -h localhost -U aruiz -d imdb_scraper
+```
+
+### Proxy Connection Refused
+
+```bash
+# Verify proxy credentials
+curl -x http://$PROXY_USER:$PROXY_PASS@$PROXY_HOST:$PROXY_PORT https://ipinfo.io
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Setup" icon="docker" href="/deployment/docker-setup">
+    Learn about the container orchestration
+  </Card>
+  <Card title="Network Configuration" icon="network-wired" href="/deployment/network-configuration">
+    Understand proxy and VPN networking
+  </Card>
+</CardGroup>

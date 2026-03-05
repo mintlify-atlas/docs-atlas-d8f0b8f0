@@ -1,0 +1,253 @@
+---
+title: Domain Interfaces
+description: Abstract interfaces defining contracts for scrapers, use cases, proxies, and Tor control
+---
+
+## Overview
+
+Domain interfaces define the contracts that infrastructure implementations must fulfill. They enable dependency inversion and loose coupling between layers.
+
+## ScraperInterface
+
+Base interface for movie scrapers.
+
+### Class Definition
+
+```python
+from abc import ABC, abstractmethod
+from typing import List
+from domain.models.movie import Movie
+
+class ScraperInterface(ABC):
+    @abstractmethod
+    def scrape(self) -> List[Movie]:
+        pass
+```
+
+**Source:** `domain/interfaces/scraper_interface.py:5-21`
+
+### Methods
+
+#### scrape
+
+Executes the scraping process and returns a list of extracted movies.
+
+```python
+def scrape(self) -> List[Movie]
+```
+
+<ResponseField name="return" type="List[Movie]">
+  List of Movie objects with data obtained from scraping.
+</ResponseField>
+
+### Implementation Example
+
+See [ImdbScraper](/api/infrastructure/scraper) for the concrete implementation.
+
+---
+
+## UseCaseInterface
+
+Base interface for all application use cases.
+
+### Class Definition
+
+```python
+from abc import ABC, abstractmethod
+from typing import Any
+
+class UseCaseInterface(ABC):
+    @abstractmethod
+    def execute(self, data: Any) -> None:
+        pass
+```
+
+**Source:** `domain/interfaces/use_case_interface.py:4-25`
+
+### Methods
+
+#### execute
+
+Executes the main use case logic.
+
+```python
+def execute(self, data: Any) -> None
+```
+
+<ParamField path="data" type="Any" required>
+  Data required to execute the use case. Can be an object, dictionary, or other type depending on the context.
+</ParamField>
+
+<ResponseField name="return" type="None">
+  Use cases perform side effects (e.g., saving to database) and return nothing.
+</ResponseField>
+
+### Implementation Examples
+
+See [Use Cases](/api/application/use-cases) for concrete implementations:
+- `SaveMovieWithActorsCsvUseCase`
+- `SaveMovieWithActorsPostgresUseCase`
+- `CompositeSaveMovieWithActorsUseCase`
+
+---
+
+## ProxyProviderInterface
+
+Interface for proxy providers supporting various proxy types.
+
+### Class Definition
+
+```python
+from abc import ABC, abstractmethod
+from typing import Optional, Dict
+
+class ProxyProviderInterface(ABC):
+    @abstractmethod
+    def get_proxy(self) -> Optional[Dict[str, str]]:
+        pass
+    
+    @abstractmethod
+    def get_proxy_location(self, proxy: Optional[Dict[str, str]]) -> tuple[str, str, str]:
+        pass
+```
+
+**Source:** `domain/interfaces/proxy_interface.py:5-35`
+
+### Methods
+
+#### get_proxy
+
+Returns the current proxy configuration to use.
+
+```python
+def get_proxy(self) -> Optional[Dict[str, str]]
+```
+
+<ResponseField name="return" type="Optional[Dict[str, str]]">
+  Proxy configuration dictionary (e.g., `{'http': 'socks5h://127.0.0.1:9050', 'https': 'socks5h://127.0.0.1:9050'}`), or `None` for direct connection.
+</ResponseField>
+
+#### get_proxy_location
+
+Retrieves geographic information associated with the proxy.
+
+```python
+def get_proxy_location(self, proxy: Optional[Dict[str, str]]) -> tuple[str, str, str]
+```
+
+<ParamField path="proxy" type="Optional[Dict[str, str]]">
+  Proxy configuration dictionary.
+</ParamField>
+
+<ResponseField name="return" type="tuple[str, str, str]">
+  Tuple containing (public IP, city, country).
+</ResponseField>
+
+### Implementation Example
+
+See [ProxyProvider](/api/infrastructure/network#proxyprovider) for the concrete implementation.
+
+---
+
+## TorInterface
+
+Interface for Tor network control.
+
+### Class Definition
+
+```python
+from abc import ABC, abstractmethod
+
+class TorInterface(ABC):
+    @abstractmethod
+    def rotate_ip(self) -> str:
+        pass
+    
+    @abstractmethod
+    def get_current_ip(self) -> str:
+        pass
+```
+
+**Source:** `domain/interfaces/tor_interface.py:3-29`
+
+### Methods
+
+#### rotate_ip
+
+Rotates the current Tor IP address and returns the new public IP.
+
+```python
+def rotate_ip(self) -> str
+```
+
+<ResponseField name="return" type="str">
+  New public IP address obtained after rotation.
+</ResponseField>
+
+#### get_current_ip
+
+Retrieves the current public IP address without performing rotation.
+
+```python
+def get_current_ip(self) -> str
+```
+
+<ResponseField name="return" type="str">
+  Current Tor public IP address.
+</ResponseField>
+
+### Implementation Example
+
+See [TorRotator](/api/infrastructure/network#torrotator) for the concrete implementation.
+
+---
+
+## Benefits of Interface Segregation
+
+### Dependency Inversion
+
+High-level modules (use cases, scrapers) depend on abstractions, not concrete implementations:
+
+```python
+class ImdbScraper(ScraperInterface):
+    def __init__(
+        self,
+        use_case: UseCaseInterface,  # Depends on interface
+        proxy_provider: ProxyProviderInterface,  # Not concrete class
+        tor_rotator: TorInterface
+    ):
+        ...
+```
+
+### Testability
+
+Easy to create mock implementations for testing:
+
+```python
+class MockProxyProvider(ProxyProviderInterface):
+    def get_proxy(self) -> Optional[Dict[str, str]]:
+        return None  # Simulate direct connection
+    
+    def get_proxy_location(self, proxy) -> tuple[str, str, str]:
+        return "127.0.0.1", "Test City", "Test Country"
+```
+
+### Flexibility
+
+Swap implementations without changing dependent code:
+
+```python
+# Use Tor
+scraper = ImdbScraper(
+    use_case=my_use_case,
+    proxy_provider=TorRotator(),
+    tor_rotator=tor_controller
+)
+
+# Or use custom proxy
+scraper = ImdbScraper(
+    use_case=my_use_case,
+    proxy_provider=CustomProxyProvider(),
+    tor_rotator=tor_controller
+)
+```

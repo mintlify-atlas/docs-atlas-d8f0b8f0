@@ -1,0 +1,221 @@
+---
+title: Analytical Queries
+description: Advanced SQL queries using window functions, aggregations, and statistical analysis
+---
+
+The IMDb Scraper includes a collection of analytical queries in `sql/queries.sql` that demonstrate advanced PostgreSQL features like window functions, CTEs, and statistical aggregations.
+
+## Query Categories
+
+These queries provide insights into:
+- Movie duration trends by decade
+- Rating variability and distribution
+- Comparison between IMDb and Metascore ratings
+- Year-based ranking of top movies
+
+## 1. Top Decades by Average Duration
+
+This query identifies which decades produced the longest movies on average.
+
+### SQL Query
+
+```sql
+-- Top 5 décadas con mayor promedio de duración de películas
+-- Objetivo: Identificar en qué décadas se produjeron películas más largas, en promedio.
+SELECT
+    (year / 10) * 10 AS decade,
+    ROUND(AVG(duration_minutes)::numeric, 2) AS avg_duration
+FROM movies
+GROUP BY decade
+ORDER BY avg_duration DESC
+LIMIT 5;
+```
+
+### How It Works
+
+1. **Decade Calculation**: `(year / 10) * 10` converts years to decades
+   - Example: 1994 → (1994 / 10) * 10 = 199 * 10 = 1990
+2. **Aggregation**: `AVG(duration_minutes)` calculates mean duration per decade
+3. **Rounding**: `ROUND(...::numeric, 2)` formats to 2 decimal places
+4. **Sorting**: Orders by longest average duration first
+
+### Use Cases
+
+- Analyze historical trends in movie length
+- Identify eras of epic cinema vs. shorter films
+- Support film studies and industry analysis
+
+## 2. Rating Standard Deviation by Year
+
+Measures the variability of IMDb ratings within each year to identify years with consensus vs. divisive movies.
+
+### SQL Query
+
+```sql
+-- Desviación estándar de las calificaciones IMDb por año
+-- Objetivo: Medir la dispersión o variabilidad de calificaciones dentro de cada año.
+SELECT
+    year,
+    COUNT(*) AS total_movies,
+    ROUND(STDDEV(rating)::numeric, 3) AS rating_stddev
+FROM movies
+WHERE rating IS NOT NULL
+GROUP BY year
+ORDER BY year;
+```
+
+### How It Works
+
+1. **Filter**: `WHERE rating IS NOT NULL` excludes movies without ratings
+2. **Group**: Aggregates by year
+3. **Count**: `COUNT(*)` shows how many rated movies per year
+4. **Standard Deviation**: `STDDEV(rating)` measures rating dispersion
+5. **Precision**: Rounds to 3 decimal places for readability
+
+### Interpretation
+
+- **Low stddev** (< 0.5): Year had movies with similar ratings (consensus)
+- **High stddev** (> 1.0): Year had wide range from excellent to poor movies
+- Useful for understanding quality consistency by year
+
+## 3. IMDb vs Metascore Comparison
+
+Detects movies where public opinion (IMDb) significantly differs from critical opinion (Metascore).
+
+### SQL Query
+
+```sql
+-- Películas con diferencia >20% entre calificación IMDb y Metascore normalizado (0-10)
+-- Objetivo: Detectar películas con opiniones divididas entre público (IMDb) y crítica (Metascore).
+SELECT
+    title,
+    rating AS imdb_rating,
+    metascore / 10.0 AS metascore_normalized,
+    ROUND(ABS(rating - metascore / 10.0)::numeric, 2) AS difference,
+    ROUND((ABS(rating - metascore / 10.0) / rating)::numeric * 100, 2) AS diff_percentage
+FROM movies
+WHERE metascore IS NOT NULL AND rating IS NOT NULL
+  AND (ABS(rating - metascore / 10.0) / rating) > 0.2;
+```
+
+### How It Works
+
+1. **Normalization**: `metascore / 10.0` converts 0-100 scale to 0-10 scale
+2. **Absolute Difference**: `ABS(rating - metascore / 10.0)` calculates gap
+3. **Percentage Difference**: Divides by rating and multiplies by 100
+4. **Filter**: Only shows movies with > 20% difference
+5. **NULL Handling**: Excludes movies missing either rating
+
+### Use Cases
+
+- Find "critic-proof" movies loved by audiences but panned by critics
+- Identify "critic darlings" that didn't resonate with general audiences
+- Analyze discrepancies between professional and user reviews
+
+### Example Results
+
+| Title | IMDb Rating | Metascore (0-10) | Difference | % Difference |
+|-------|-------------|------------------|------------|-------------|
+| Blockbuster X | 8.5 | 5.0 | 3.5 | 41.18% |
+| Indie Film Y | 6.2 | 8.5 | 2.3 | 37.10% |
+
+## 4. Movie Rankings by Year (Window Functions)
+
+Uses window functions to rank movies within each year, demonstrating `PARTITION BY` and `ORDER BY` clauses.
+
+### SQL Query
+
+```sql
+-- Ranking por año de las películas usando funciones de ventana
+-- Objetivo: Obtener el top de películas mejor calificadas por año.
+SELECT
+    year,
+    title,
+    rating,
+    RANK() OVER (PARTITION BY year ORDER BY rating DESC) AS rank_in_year
+FROM movies
+ORDER BY year, rank_in_year;
+```
+
+### Window Function Breakdown
+
+**`RANK() OVER (PARTITION BY year ORDER BY rating DESC)`**
+
+- **RANK()**: Assigns ranking with gaps for ties
+  - Example: If two movies tie for #1, next is #3 (not #2)
+- **PARTITION BY year**: Creates separate ranking groups per year
+  - Resets ranking for each new year
+- **ORDER BY rating DESC**: Ranks from highest to lowest rating
+
+### How It Works
+
+1. Window function creates partitions for each year
+2. Within each partition, movies are sorted by rating (descending)
+3. RANK() assigns position within that year's ranking
+4. Final ORDER BY arranges chronologically by year, then by rank
+
+### Use Cases
+
+- Generate "Best of [Year]" lists automatically
+- Compare top movies across different years
+- Filter to show only top N movies per year:
+  ```sql
+  WHERE rank_in_year <= 10  -- Top 10 per year
+  ```
+
+### Alternative Window Functions
+
+- **ROW_NUMBER()**: No gaps in ranking (1, 2, 3...) even with ties
+- **DENSE_RANK()**: Gaps for ties but consecutive numbers (1, 1, 2, 3...)
+- **NTILE(n)**: Divides into n equal buckets (quartiles, percentiles, etc.)
+
+## Window Functions in Action
+
+The index created in the schema optimizes these queries:
+
+```sql
+CREATE INDEX idx_movies_year_rating ON movies(year, rating);
+```
+
+This composite index supports:
+- PARTITION BY year (groups by year)
+- ORDER BY rating DESC (sorts within partitions)
+
+## Performance Considerations
+
+<Warning>
+  Window functions can be memory-intensive on large datasets. The `idx_movies_year_rating` index significantly improves performance by pre-sorting data in the required order.
+</Warning>
+
+## Extending the Queries
+
+These queries can be extended with:
+
+- **CTEs (Common Table Expressions)**: Break complex queries into readable steps
+  ```sql
+  WITH ranked_movies AS (
+    SELECT year, title, rating,
+           RANK() OVER (PARTITION BY year ORDER BY rating DESC) AS rank
+    FROM movies
+  )
+  SELECT * FROM ranked_movies WHERE rank <= 5;
+  ```
+
+- **Multiple Window Functions**: Combine different analytics
+  ```sql
+  SELECT year, title, rating,
+         AVG(rating) OVER (PARTITION BY year) AS year_avg,
+         rating - AVG(rating) OVER (PARTITION BY year) AS diff_from_avg
+  FROM movies;
+  ```
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Database Schema" icon="database" href="/data/schema">
+    Complete schema with tables, indexes, and constraints
+  </Card>
+  <Card title="CSV Export" icon="file-csv" href="/data/csv-export">
+    Export query results to CSV for external analysis
+  </Card>
+</CardGroup>

@@ -1,0 +1,335 @@
+---
+title: "Docker Setup"
+description: "Complete guide to building and running the IMDb Scraper using Docker containers"
+---
+
+The IMDb Scraper is fully containerized using Docker Compose, enabling one-command deployment with all dependencies included.
+
+## Architecture Overview
+
+The Docker environment consists of four main services:
+
+- **postgres**: PostgreSQL 15 database for structured data storage
+- **tor**: TOR proxy for IP rotation and anonymity
+- **vpn**: Gluetun VPN container for geolocation changes
+- **scraper**: The main application container
+
+## Docker Compose Configuration
+
+The complete orchestration is defined in `docker-compose.yml`:
+
+```yaml
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: imdb_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    networks:
+      - app_net
+
+  tor:
+      image: dperson/torproxy
+      container_name: tor_proxy
+      restart: always
+      ports:
+        - "9050:9050" # SOCKS port for traffic
+        - "9051:9051" # Control port for commands (IP rotation)
+      command: >
+        sh -c "tor --SocksPort 0.0.0.0:9050 --ControlPort 0.0.0.0:9051 --HashedControlPassword '' --CookieAuthentication 0"
+      networks:
+        - app_net
+
+  vpn:
+    image: qmcgaw/gluetun
+    container_name: vpn
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - OPENVPN_USER=${VPN_USERNAME}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      - SERVER_COUNTRIES=Argentina
+    ports:
+      - "8888:8888"
+    networks:
+      - vpn_net
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: imdb_scraper
+    depends_on:
+      - postgres
+      - tor
+      - vpn
+    networks:
+      - app_net
+      - vpn_net
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+        echo 'Waiting for Postgres to be ready...' &&
+        while ! nc -z postgres 5432; do sleep 1; done &&
+        echo 'Postgres ready. Starting scraper...' &&
+
+        echo 'Waiting for Tor to be ready...' &&
+        while ! nc -z tor 9050; do sleep 1; done &&
+        echo 'SOCKS port ready. Tor fully initialized.' &&
+
+        python presentation/cli/run_scraper.py &&
+        echo 'Scraper finished. Running queries.sql...' &&
+        PGPASSWORD=$POSTGRES_PASSWORD psql -h postgres -U $POSTGRES_USER -d $POSTGRES_DB -f sql/queries.sql &&
+        echo 'SQL queries executed. Keeping container active...' &&
+        tail -f /dev/null
+      "
+
+volumes:
+  pgdata:
+
+networks:
+  app_net:
+    driver: bridge
+  vpn_net:
+    driver: bridge
+```
+
+## Dockerfile Breakdown
+
+The scraper container is built from this `Dockerfile`:
+
+```dockerfile
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+# Install system dependencies including postgresql-client
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    tor \
+    curl \
+    netcat-openbsd \
+    gnupg \
+    ca-certificates \
+    postgresql-client \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the project
+COPY . .
+
+# Default command
+CMD ["python", "presentation/cli/run_scraper.py"]
+```
+
+### Key Components
+
+<AccordionGroup>
+  <Accordion title="Base Image">
+    Uses `python:3.11-slim` for a lightweight Python environment with minimal footprint.
+  </Accordion>
+
+  <Accordion title="System Dependencies">
+    - **gcc**: Required for compiling Python packages with C extensions
+    - **libpq-dev**: PostgreSQL development libraries for psycopg2
+    - **tor**: TOR network client
+    - **netcat-openbsd**: Network utility for health checks
+    - **postgresql-client**: CLI tools for database operations
+  </Accordion>
+
+  <Accordion title="Python Dependencies">
+    Installed from `requirements.txt` without cache to reduce image size.
+  </Accordion>
+</AccordionGroup>
+
+## Service Dependencies
+
+The scraper container has explicit dependencies:
+
+```yaml
+depends_on:
+  - postgres
+  - tor
+  - vpn
+```
+
+And includes health checks in the startup command:
+
+- Waits for PostgreSQL on port 5432
+- Waits for TOR SOCKS proxy on port 9050
+- Only starts scraping when both services are responsive
+
+## Volume Mounts
+
+<CardGroup cols={2}>
+  <Card title="Database Persistence" icon="database">
+    `pgdata:/var/lib/postgresql/data` ensures PostgreSQL data survives container restarts
+  </Card>
+  <Card title="SQL Initialization" icon="file-code">
+    `./sql:/docker-entrypoint-initdb.d` auto-runs SQL scripts on first startup
+  </Card>
+  <Card title="Application Code" icon="folder">
+    `.:/app` mounts the entire project for development (can be removed in production)
+  </Card>
+</CardGroup>
+
+## Build and Run
+
+### Initial Build
+
+```bash
+docker-compose build --no-cache
+```
+
+This builds the scraper image from scratch, ensuring all dependencies are fresh.
+
+### Start All Services
+
+```bash
+docker-compose up
+```
+
+Or run in detached mode:
+
+```bash
+docker-compose up -d
+```
+
+### View Logs
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f scraper
+```
+
+### Stop Services
+
+```bash
+docker-compose down
+```
+
+### Rebuild After Changes
+
+```bash
+docker-compose down
+docker-compose build --no-cache
+docker-compose up
+```
+
+## Port Mappings
+
+| Service | Internal Port | External Port | Purpose |
+|---------|--------------|---------------|----------|
+| postgres | 5432 | ${POSTGRES_PORT} | Database connections |
+| tor | 9050 | 9050 | SOCKS proxy traffic |
+| tor | 9051 | 9051 | Control port (IP rotation) |
+| vpn | 8888 | 8888 | VPN HTTP proxy |
+
+## Accessing Services
+
+<Steps>
+  <Step title="PostgreSQL Database">
+    Connect from host machine:
+    ```bash
+    psql -h localhost -p 5432 -U aruiz -d imdb_scraper
+    ```
+  </Step>
+  
+  <Step title="Scraper Logs">
+    Real-time logs available in `logs/scraper.log` or via Docker:
+    ```bash
+    docker logs -f imdb_scraper
+    ```
+  </Step>
+  
+  <Step title="Generated Data">
+    CSV files appear in `data/` directory:
+    - `movies.csv`
+    - `actors.csv`
+    - `movie_actor.csv`
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<Warning>
+  If the scraper exits immediately, check that:
+  - The `.env` file exists with all required variables
+  - PostgreSQL container is healthy: `docker ps`
+  - TOR proxy is responding: `docker logs tor_proxy`
+</Warning>
+
+### Common Issues
+
+**Database Connection Failed**
+```bash
+# Check if postgres is running
+docker ps | grep postgres
+
+# View postgres logs
+docker logs imdb_postgres
+```
+
+**TOR Not Ready**
+```bash
+# Verify TOR is listening
+docker exec tor_proxy netstat -tuln | grep 9050
+```
+
+**VPN Connection Issues**
+```bash
+# Check VPN status
+docker logs vpn
+```
+
+## Production Considerations
+
+<CardGroup cols={2}>
+  <Card title="Remove Volume Mount" icon="code">
+    Change `- .:/app` to only mount necessary files, not entire codebase
+  </Card>
+  <Card title="Use Secrets" icon="lock">
+    Replace `.env` file with Docker secrets or external secret management
+  </Card>
+  <Card title="Health Checks" icon="heart-pulse">
+    Add explicit `healthcheck` directives to docker-compose.yml
+  </Card>
+  <Card title="Resource Limits" icon="gauge">
+    Set memory and CPU limits for each service
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="gear" href="/deployment/environment-variables">
+    Configure database, proxy, and VPN credentials
+  </Card>
+  <Card title="Network Configuration" icon="network-wired" href="/deployment/network-configuration">
+    Understand Docker networks and proxy setup
+  </Card>
+</CardGroup>

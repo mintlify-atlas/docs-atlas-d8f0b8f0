@@ -1,0 +1,167 @@
+---
+title: Database Schema
+description: Complete PostgreSQL database schema for IMDb movie and actor data
+---
+
+The IMDb Scraper uses a PostgreSQL relational database with three core tables that model the relationship between movies and actors.
+
+## Overview
+
+The database schema consists of:
+- **movies** - Stores movie metadata from IMDb
+- **actors** - Stores unique actor names
+- **movie_actor** - Junction table for the N:M relationship
+
+## Entity-Relationship Model
+
+The schema implements a many-to-many (N:M) relationship between movies and actors:
+- One movie can have multiple actors
+- One actor can appear in multiple movies
+- The `movie_actor` table serves as a junction/bridge table
+
+```
+movies (1) ←→ (N) movie_actor (N) ←→ (1) actors
+```
+
+## Tables
+
+### movies
+
+Stores core movie information extracted from IMDb.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | SERIAL | PRIMARY KEY | Auto-incrementing unique identifier |
+| `imdb_id` | VARCHAR(15) | UNIQUE, NOT NULL | Official IMDb ID (e.g., tt0111161) |
+| `title` | TEXT | NOT NULL, length > 0 | Movie title |
+| `year` | INT | 1888 to current year + 1 | Release year |
+| `rating` | FLOAT | 0.0 to 10.0 | IMDb user rating |
+| `duration_minutes` | INT | 1 to 600 | Runtime in minutes |
+| `metascore` | INT | 0 to 100 | Metacritic score |
+
+**Constraints:**
+- Year must be between 1888 (first film) and next year
+- Rating must be between 0 and 10
+- Duration must be reasonable (1-600 minutes, up to 10 hours)
+- Metascore must be between 0 and 100
+
+### actors
+
+Stores unique actor names.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | SERIAL | PRIMARY KEY | Auto-incrementing unique identifier |
+| `name` | TEXT | UNIQUE, NOT NULL, length > 1 | Actor's full name |
+
+**Constraints:**
+- Name must be unique across all actors
+- Name must have at least 2 characters
+
+### movie_actor
+
+Junction table implementing the N:M relationship between movies and actors.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `movie_id` | INT | PRIMARY KEY (composite), FOREIGN KEY | References movies(id) |
+| `actor_id` | INT | PRIMARY KEY (composite), FOREIGN KEY | References actors(id) |
+
+**Constraints:**
+- Composite primary key ensures each movie-actor pair is unique
+- Foreign keys with CASCADE DELETE ensure referential integrity
+- When a movie is deleted, all related actor associations are removed
+- When an actor is deleted, all related movie associations are removed
+
+## Indexes
+
+The schema includes a composite index for performance optimization:
+
+```sql
+CREATE INDEX idx_movies_year_rating ON movies(year, rating);
+```
+
+**Purpose:**
+- Speeds up queries filtering or sorting by year and rating
+- Optimizes common analytical queries (e.g., "top movies by year")
+- Supports queries in `sql/queries.sql` that partition by year
+
+## Complete Schema SQL
+
+Here's the complete schema definition from `sql/01_schema.sql`:
+
+```sql
+-- =============================================
+--  Archivo: schema.sql
+--  Propósito: Definir la estructura base de datos para el proyecto IMDb Scraper
+--  Autor: Andrés Ruiz
+--  Fecha de creación: 2025-08-03
+--  Descripción: Tablas relacionales para películas, actores y su relación N:M
+-- =============================================
+
+-- Elimina las tablas si ya existen para permitir recrear el esquema limpio
+DROP TABLE IF EXISTS movie_actor;
+DROP TABLE IF EXISTS actors;
+DROP TABLE IF EXISTS movies;
+
+-- =============================================
+-- Tabla: movies
+-- Descripción: Contiene datos básicos de películas extraídas desde IMDb
+-- =============================================
+CREATE TABLE movies (
+    id SERIAL PRIMARY KEY,               -- Identificador único (autoincremental)
+    imdb_id VARCHAR(15) UNIQUE NOT NULL, -- ID oficial de IMDb (ej. tt0111161)
+    title TEXT NOT NULL CHECK (char_length(title) > 0), -- Título no vacío
+    year INT CHECK (year BETWEEN 1888 AND EXTRACT(YEAR FROM CURRENT_DATE) + 1), -- Rango de años válidos
+    rating FLOAT CHECK (rating BETWEEN 0 AND 10), -- Calificación IMDb
+    duration_minutes INT CHECK (duration_minutes BETWEEN 1 AND 600), -- Duración razonable (hasta 10 horas)
+    metascore INT CHECK (metascore BETWEEN 0 AND 100) -- Puntuación Metacritic
+);
+
+-- =============================================
+-- Tabla: actors
+-- Descripción: Contiene los nombres únicos de los actores principales
+-- =============================================
+CREATE TABLE actors (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE CHECK (char_length(name) > 1) -- Nombre no vacío y único
+);
+
+-- =============================================
+-- Tabla: movie_actor
+-- Descripción: Representa la relación N:M entre películas y actores
+-- =============================================
+CREATE TABLE movie_actor (
+    movie_id INT NOT NULL,
+    actor_id INT NOT NULL,
+    PRIMARY KEY (movie_id, actor_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(id) ON DELETE CASCADE,
+    FOREIGN KEY (actor_id) REFERENCES actors(id) ON DELETE CASCADE
+);
+
+-- =============================================
+-- Índices para consultas más rápidas por año y calificación
+-- =============================================
+CREATE INDEX idx_movies_year_rating ON movies(year, rating);
+```
+
+## Database Functions
+
+The schema is complemented by upsert functions in `sql/02_procedures.sql` that handle INSERT ... ON CONFLICT operations:
+
+- **upsert_movie()** - Inserts or ignores movies based on `imdb_id`
+- **upsert_actor()** - Inserts or ignores actors based on `name`
+- **upsert_movie_actor()** - Inserts movie-actor relationships without duplicates
+
+These functions ensure idempotent data loading and prevent duplicate entries.
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Analytical Queries" icon="chart-line" href="/data/analytical-queries">
+    Advanced SQL queries with window functions and CTEs
+  </Card>
+  <Card title="CSV Export" icon="file-csv" href="/data/csv-export">
+    Exporting and loading data from CSV files
+  </Card>
+</CardGroup>

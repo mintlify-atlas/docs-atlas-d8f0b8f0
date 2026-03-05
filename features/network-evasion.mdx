@@ -1,0 +1,407 @@
+---
+title: Network Evasion
+description: Multi-layer network evasion with VPN, proxy rotation, TOR network, and exponential backoff retry logic
+---
+
+The IMDb Scraper implements a sophisticated three-layer network evasion strategy to bypass rate limiting, geo-blocking, and anti-scraping measures.
+
+## Multi-Layer Architecture
+
+The network stack provides redundancy through sequential fallback mechanisms:
+
+```
+Layer 1: VPN (ProtonVPN via Docker) → Global IP masking
+Layer 2: Premium Proxy (DataImpulse) → IP rotation per request
+Layer 3: TOR Network → Anonymous distributed routing
+```
+
+## Layer 1: VPN Setup
+
+### Docker Configuration
+
+The scraper runs behind a ProtonVPN container using the `qmcgaw/gluetun` image:
+
+```yaml
+vpn:
+  image: qmcgaw/gluetun
+  container_name: vpn
+  cap_add:
+    - NET_ADMIN
+  environment:
+    - VPN_SERVICE_PROVIDER=protonvpn
+    - OPENVPN_USER=${VPN_USERNAME}
+    - OPENVPN_PASSWORD=${VPN_PASSWORD}
+    - SERVER_COUNTRIES=Argentina
+  ports:
+    - "8888:8888"
+  networks:
+    - vpn_net
+```
+
+Location: `docker-compose.yml:34`
+
+### Network Isolation
+
+The scraper container connects to both the VPN network and the application network:
+
+```yaml
+scraper:
+  build:
+    context: .
+    dockerfile: Dockerfile
+  container_name: imdb_scraper
+  depends_on:
+    - postgres
+    - tor
+    - vpn
+  networks:
+    - app_net
+    - vpn_net  # Routes traffic through VPN
+```
+
+Location: `docker-compose.yml:49`
+
+## Layer 2: Proxy Rotation
+
+### ProxyProvider Implementation
+
+The `ProxyProvider` class manages premium proxy connections:
+
+```python
+class ProxyProvider(ProxyProviderInterface):
+    def __init__(self):
+        self.current_proxy: Optional[Dict[str, str]] = None
+        
+    def get_proxy(self) -> Optional[Dict[str, str]]:
+        proxy_to_use = None
+
+        if config.USE_CUSTOM_PROXY:
+            proxy_auth = f"{config.PROXY_USER}:{config.PROXY_PASS}@{config.PROXY_HOST}:{config.PROXY_PORT}"
+            logger.info(f"[PROXY] Usando proxy autenticado: {config.PROXY_HOST}:{config.PROXY_PORT}")
+            proxy_to_use = {
+                "http": f"http://{proxy_auth}",
+                "https": f"http://{proxy_auth}"
+            }
+        elif config.USE_TOR:
+            logger.info(f"[PROXY] Usando red TOR: {config.TOR_PROXY}")
+            proxy_to_use = config.TOR_PROXY
+        else:
+            logger.warning("[PROXY] No se encontró proxy configurado. Usando conexión directa.")
+            proxy_to_use = None
+
+        self.current_proxy = proxy_to_use
+        return self.current_proxy
+```
+
+Location: `infrastructure/network/proxy_provider.py:24`
+
+### Proxy Configuration
+
+Proxies are configured via environment variables:
+
+```python
+PROXY_HOST = os.getenv("PROXY_HOST")  # gw.dataimpulse.com
+PROXY_PORT = os.getenv("PROXY_PORT")  # 823
+PROXY_USER = os.getenv("PROXY_USER")
+PROXY_PASS = os.getenv("PROXY_PASS")
+
+USE_CUSTOM_PROXY = all([PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS])
+```
+
+Location: `shared/config/config.py:31`
+
+### IP Validation
+
+The proxy provider validates IP changes using ipinfo.io:
+
+```python
+def get_proxy_location(self) -> tuple[str, str, str]:
+    try:
+        resp = requests.get(
+            config.URL_IPINFO, 
+            proxies=self.current_proxy, 
+            timeout=config.REQUEST_TIMEOUT
+        )
+        resp.raise_for_status()
+
+        data = resp.json()
+        ip = data.get("ip", "N/A")
+        city = data.get("city", "N/A")
+        country = data.get("country", "N/A")
+        return ip, city, country
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"[PROXY INFO] No se pudo obtener IP pública: {e}")
+    
+    return "N/A", "N/A", "N/A"
+```
+
+Location: `infrastructure/network/proxy_provider.py:60`
+
+## Layer 3: TOR Network
+
+### TOR Docker Service
+
+The TOR proxy runs as a dedicated service:
+
+```yaml
+tor:
+  image: dperson/torproxy
+  container_name: tor_proxy
+  restart: always
+  ports:
+    - "9050:9050"  # SOCKS proxy port
+    - "9051:9051"  # Control port for IP rotation
+  command: >
+    sh -c "tor --SocksPort 0.0.0.0:9050 --ControlPort 0.0.0.0:9051 
+           --HashedControlPassword '' --CookieAuthentication 0"
+  networks:
+    - app_net
+```
+
+Location: `docker-compose.yml:22`
+
+### TOR Rotator Implementation
+
+The `TorRotator` class manages IP rotation using the stem library:
+
+```python
+class TorRotator(TorInterface):
+    def __init__(self):
+        self.control_port = config.TOR_CONTROL_PORT  # 9051
+        self.wait_time = config.TOR_WAIT_AFTER_ROTATION  # 12 seconds
+        self.max_retries = config.MAX_RETRIES  # 3
+        self.proxy = config.TOR_PROXY
+        self.host = config.TOR_HOST  # "tor"
+
+    def _send_newnym(self) -> bool:
+        try:
+            tor_ip = socket.gethostbyname(self.host)
+            logger.info(f"[TOR] Intentando conectar al puerto de control en {self.host} ({tor_ip}:{self.control_port})...")
+         
+            with Controller.from_port(address=tor_ip, port=self.control_port) as controller:
+                controller.authenticate()
+                controller.signal(Signal.NEWNYM)  # Request new identity
+            
+            return True
+        except Exception as e:
+            logger.error(f"[TOR] No se pudo conectar al puerto de control de TOR: {e}")
+            return False
+```
+
+Location: `infrastructure/network/tor_rotator.py:42`
+
+### IP Rotation with Validation
+
+```python
+def rotate_ip(self) -> str:
+    original_ip = self.get_current_ip()
+    logger.info(f"[TOR] IP original antes de rotar: {original_ip}")
+    
+    if not original_ip:
+        logger.error("[TOR] No se pudo obtener la IP original. Abortando rotación.")
+        return ""
+
+    for attempt in range(self.max_retries):
+        logger.info(f"[TOR] Enviando señal NEWNYM (Intento {attempt + 1}/{self.max_retries})")
+        
+        if not self._send_newnym():
+            return original_ip
+
+        time.sleep(self.wait_time)  # Wait for TOR to establish new circuit
+        new_ip = self.get_current_ip()
+        
+        if new_ip and new_ip != original_ip:
+            logger.info(f"[TOR] Rotación exitosa: {original_ip} → {new_ip}")
+            return new_ip
+        else:
+            logger.warning(f"[TOR] La IP no cambió. Nueva IP obtenida: {new_ip}")
+
+    logger.warning("[TOR] No se logró rotar la IP después de todos los intentos.")
+    return original_ip
+```
+
+Location: `infrastructure/network/tor_rotator.py:61`
+
+### TOR Configuration
+
+```python
+TOR_HOST = "tor"
+TOR_CONTROL_PORT = 9051
+TOR_PROXY_PORT = 9050
+TOR_PROXY = {
+    "http": f"socks5h://{TOR_HOST}:{TOR_PROXY_PORT}",
+    "https": f"socks5h://{TOR_HOST}:{TOR_PROXY_PORT}"
+}
+TOR_WAIT_AFTER_ROTATION = 12  # seconds
+```
+
+Location: `shared/config/config.py:36`
+
+## Exponential Backoff Retry Logic
+
+### Request Utility with Fallback
+
+The `make_request` function implements intelligent retry logic:
+
+```python
+def make_request(
+    url: str,
+    proxy_provider,
+    tor_rotator,
+    method: str = "GET",
+    json_payload: dict = None,
+    headers: dict = None
+) -> Optional[requests.Response]:
+    # Define strategy sequence
+    strategies = []
+    if config.USE_TOR:
+        strategies.append('tor')
+    else:
+        strategies.append('proxy')
+        strategies.append('tor')  # TOR as fallback
+
+    for strategy in strategies:
+        logger.info(f"Iniciando peticiones con estrategia: {strategy.upper()}")
+        
+        for attempt in range(1, config.MAX_RETRIES + 1):
+            proxies = None
+            log_ip_info = "Conexión Directa (VPN)"
+
+            try:
+                if strategy == 'proxy':
+                    proxies = proxy_provider.get_proxy()
+                    ip, city, country = proxy_provider.get_proxy_location()
+                    log_ip_info = f"Proxy: {ip} ({city}, {country})"
+                elif strategy == 'tor':
+                    tor_rotator.rotate_ip()
+                    proxies = config.TOR_PROXY
+                    ip = tor_rotator.get_current_ip()
+                    log_ip_info = f"TOR: {ip}"
+                
+                request_headers = _get_headers(headers)
+                logger.info(f"Intento {attempt}/{config.MAX_RETRIES} | {method.upper()} {url} | Usando: {log_ip_info}")
+
+                if method.upper() == 'POST':
+                    response = requests.post(
+                        url, headers=request_headers, 
+                        proxies=proxies, json=json_payload, 
+                        timeout=config.REQUEST_TIMEOUT
+                    )
+                else:
+                    response = requests.get(
+                        url, headers=request_headers, 
+                        proxies=proxies, 
+                        timeout=config.REQUEST_TIMEOUT
+                    )
+                
+                logger.info(f"Respuesta: {response.status_code} | URL Final: {response.url}")
+
+                if response.status_code == 200:
+                    return response
+                
+                # Rotate TOR IP on block
+                if strategy == 'tor' and response.status_code in config.BLOCK_CODES:
+                    logger.warning(f"Código de bloqueo {response.status_code} con TOR. Rotando IP...")
+                    tor_rotator.rotate_ip()
+                    time.sleep(config.TOR_WAIT_AFTER_ROTATION)
+
+            except RequestException as e:
+                logger.warning(f"Error de red en intento {attempt} con {strategy.upper()}: {e}")
+            
+            # Exponential backoff
+            time.sleep(config.RETRY_DELAYS[min(attempt - 1, len(config.RETRY_DELAYS) - 1)])
+        
+        if strategy != strategies[-1]:
+            logger.warning(f"La estrategia {strategy.upper()} falló. Pasando a la siguiente...")
+
+    logger.error(f"Todos los intentos y estrategias fallaron para la URL: {url}")
+    return None
+```
+
+Location: `infrastructure/scraper/utils.py:21`
+
+## User-Agent Rotation
+
+### Random User-Agent Selection
+
+```python
+def _get_headers(custom_headers: Optional[dict] = None) -> dict:
+    base_headers = {"User-Agent": random.choice(config.USER_AGENTS)}
+    if custom_headers:
+        base_headers.update(custom_headers)
+    return base_headers
+```
+
+Location: `infrastructure/scraper/utils.py:14`
+
+### User-Agent Pool
+
+```python
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/88.0.4324.96 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5) AppleWebKit/537.36 Chrome/90.0.4430.91 Mobile Safari/537.36"
+]
+```
+
+Location: `shared/config/config.py:23`
+
+## Configuration Options
+
+### Network Settings
+
+```python
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAYS = [1, 3, 5]  # Exponential backoff in seconds
+REQUEST_TIMEOUT = 10
+
+# Block detection
+BLOCK_CODES = [202, 403, 404, 429, 500]
+
+# Proxy settings
+USE_CUSTOM_PROXY = all([PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS])
+USE_TOR = not USE_CUSTOM_PROXY
+
+# TOR settings
+TOR_WAIT_AFTER_ROTATION = 12  # seconds
+```
+
+## Environment Variables
+
+Required variables in `.env`:
+
+```bash
+# Proxy Configuration (DataImpulse)
+PROXY_HOST=gw.dataimpulse.com
+PROXY_PORT=823
+PROXY_USER=your_username
+PROXY_PASS=your_password
+
+# VPN Configuration (ProtonVPN)
+VPN_PROVIDER=protonvpn
+VPN_USERNAME=your_username
+VPN_PASSWORD=your_password
+VPN_COUNTRY=Argentina
+```
+
+## Strategy Selection Logic
+
+The scraper automatically selects the best strategy:
+
+1. **If `USE_CUSTOM_PROXY=True`:** Uses premium proxy only
+2. **If `USE_CUSTOM_PROXY=False`:** Uses TOR network
+3. **On proxy failure:** Automatically falls back to TOR
+4. **On all failures:** Uses direct connection through VPN
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Scraping Engine" icon="code" href="/features/scraping-engine">
+    Learn how the scraping engine works
+  </Card>
+  <Card title="Concurrency" icon="bolt" href="/features/concurrency">
+    Explore parallel processing implementation
+  </Card>
+</CardGroup>
