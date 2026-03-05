@@ -155,6 +155,41 @@ The schema is complemented by upsert functions in `sql/02_procedures.sql` that h
 
 These functions ensure idempotent data loading and prevent duplicate entries.
 
+## Database Views
+
+The schema includes views in `sql/03_views.sql` to simplify common queries:
+
+### vw_movie_actor_main
+
+A convenience view that shows each movie with its primary actor (the actor with the lowest ID):
+
+```sql
+CREATE OR REPLACE VIEW vw_movie_actor_main AS
+SELECT
+    m.id AS movie_id,
+    m.title,
+    a.id AS actor_id,
+    a.name AS actor_name
+FROM movies m
+JOIN movie_actor ma ON m.id = ma.movie_id
+JOIN actors a ON ma.actor_id = a.id
+WHERE ma.actor_id = (
+    SELECT MIN(ma2.actor_id)
+    FROM movie_actor ma2
+    WHERE ma2.movie_id = m.id
+);
+```
+
+This view is useful for simplified reports requiring only one actor per movie.
+
+**Usage example:**
+
+```sql
+SELECT title, actor_name 
+FROM vw_movie_actor_main 
+WHERE title LIKE '%Godfather%';
+```
+
 ## Related Pages
 
 <CardGroup cols={2}>
